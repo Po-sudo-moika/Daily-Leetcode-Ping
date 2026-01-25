@@ -1,0 +1,10 @@
+[service]
+name = "LeetcodePingService"
+version = "1.0.0"
+env = "production"
+
+[telegram]
+botCode = "your bot id"
+telegramChats = [
+	"your chat id"
+]

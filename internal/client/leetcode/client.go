@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/labstack/gommon/log"
 )
 
 type client struct {
@@ -49,7 +50,11 @@ func (l *client) GetCurrentDailyTask(ctx context.Context) (domain.Task, error) {
 	if err != nil {
 		return domain.Task{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Errorf("error while closing resp body: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		msg, err := io.ReadAll(resp.Body)
