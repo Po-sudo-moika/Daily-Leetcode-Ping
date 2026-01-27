@@ -6,20 +6,26 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/leetcode"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/telegram"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/config"
 	"github.com/go-telegram/bot"
-	"gopkg.in/robfig/cron.v2"
+	"github.com/robfig/cron/v3"
 )
 
 func main() {
-	c := cron.New()
+	moscowLoc, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		log.Fatal("Ошибка загрузки таймзоны:", err)
+	}
 
-	_, err := c.AddFunc("0 10 * * *", func() {
-		log.Println("Запуск ежедневной задачи...")
+	c := cron.New(cron.WithLocation(moscowLoc))
+
+	_, err = c.AddFunc("0 11 * * *", func() {
+		log.Printf("Запуск ежедневной задачи в %s...", time.Now().In(moscowLoc).Format("15:04"))
 		sendDailyPost()
 	})
 
