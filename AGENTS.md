@@ -13,7 +13,7 @@ A small Go service. It posts the LeetCode daily problem to Telegram chats. It po
 ## Code layout
 
 - `cmd/main.go`: entry point, cron schedule.
-- `internal/daily`: fetches the daily problem and serves the hourly delivery windows.
+- `internal/daily`: fetches the daily problem and runs the hourly delivery round.
 - `internal/config`: config structs.
 - `internal/client/leetcode`: LeetCode API client.
 - `internal/client/telegram`: Telegram client and message text.
