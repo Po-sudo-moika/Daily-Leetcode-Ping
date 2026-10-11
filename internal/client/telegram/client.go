@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
@@ -34,11 +35,7 @@ func New(api API, chats []string, subscribers Subscribers) (Client, error) {
 }
 
 func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQuestion) error {
-	text := getPostMessageSchema(question)
-
-	for _, chatID := range c.chats {
-		c.sendMessage(ctx, chatID, text)
-	}
+	c.sendToFixed(ctx, getPostMessageSchema(question))
 
 	return nil
 }
@@ -46,18 +43,13 @@ func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQues
 func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) error {
 	text := getPostMessageSchema(question)
 
-	sent := make(map[string]struct{}, len(c.chats))
-	for _, chatID := range c.chats {
-		sent[chatID] = struct{}{}
-		c.sendMessage(ctx, chatID, text)
-	}
+	c.sendToFixed(ctx, text)
 
 	for _, chatID := range c.subscribers.List() {
-		key := strconv.FormatInt(chatID, 10)
-		if _, ok := sent[key]; ok {
+		// A subscriber who is also a fixed chat already got the post.
+		if slices.Contains(c.chats, strconv.FormatInt(chatID, 10)) {
 			continue
 		}
-		sent[key] = struct{}{}
 
 		err := c.sendMessage(ctx, chatID, text)
 		if errors.Is(err, bot.ErrorForbidden) {
@@ -67,6 +59,12 @@ func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) e
 	}
 
 	return nil
+}
+
+func (c *client) sendToFixed(ctx context.Context, text string) {
+	for _, chatID := range c.chats {
+		c.sendMessage(ctx, chatID, text)
+	}
 }
 
 func (c *client) dropSubscriber(chatID int64) {

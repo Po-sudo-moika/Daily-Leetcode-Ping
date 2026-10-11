@@ -56,33 +56,28 @@ func (m *Menu) HandleStart(ctx context.Context, _ *bot.Bot, update *models.Updat
 }
 
 func (m *Menu) HandleSubscribe(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	chatID, ok := m.ackCallback(ctx, update)
-	if !ok {
-		return
-	}
-
-	if _, err := m.subscribers.Add(chatID); err != nil {
-		log.Errorf("error while subscribing %d: %v", chatID, err)
-		m.send(ctx, chatID, saveFailedText, menuKeyboard())
-		return
-	}
-
-	m.send(ctx, chatID, subscribedText, menuKeyboard())
+	m.change(ctx, update, m.subscribers.Add, subscribedText)
 }
 
 func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	m.change(ctx, update, m.subscribers.Remove, unsubscribedText)
+}
+
+// change applies a subscription change for the chat of the pressed button and
+// replies with the new state.
+func (m *Menu) change(ctx context.Context, update *models.Update, apply func(int64) (bool, error), doneText string) {
 	chatID, ok := m.ackCallback(ctx, update)
 	if !ok {
 		return
 	}
 
-	if _, err := m.subscribers.Remove(chatID); err != nil {
-		log.Errorf("error while unsubscribing %d: %v", chatID, err)
+	if _, err := apply(chatID); err != nil {
+		log.Errorf("error while changing subscription of %d: %v", chatID, err)
 		m.send(ctx, chatID, saveFailedText, menuKeyboard())
 		return
 	}
 
-	m.send(ctx, chatID, unsubscribedText, menuKeyboard())
+	m.send(ctx, chatID, doneText, menuKeyboard())
 }
 
 func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Update) {

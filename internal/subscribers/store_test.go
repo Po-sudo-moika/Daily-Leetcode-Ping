@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -42,7 +43,7 @@ func TestAddRemove(t *testing.T) {
 	if err != nil || added {
 		t.Fatalf("second add: added=%v err=%v", added, err)
 	}
-	if !s.Has(42) {
+	if !slices.Contains(s.List(), 42) {
 		t.Fatal("42 must be subscribed")
 	}
 
@@ -54,7 +55,7 @@ func TestAddRemove(t *testing.T) {
 	if err != nil || removed {
 		t.Fatalf("second remove: removed=%v err=%v", removed, err)
 	}
-	if s.Has(42) {
+	if slices.Contains(s.List(), 42) {
 		t.Fatal("42 must not be subscribed")
 	}
 }
@@ -140,7 +141,7 @@ func TestAdd_RollsBackWhenSaveFails(t *testing.T) {
 	if _, err := s.Add(7); err == nil {
 		t.Fatal("want a save error")
 	}
-	if s.Has(7) {
+	if slices.Contains(s.List(), 7) {
 		t.Fatal("a failed add must not stay in memory")
 	}
 }
