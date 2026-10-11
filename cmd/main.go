@@ -62,7 +62,7 @@ func main() {
 	}
 
 	c := cron.New(cron.WithLocation(moscowLoc))
-	schedule := daily.NewSchedule(leetcodeClient, tgClient)
+	schedule := daily.NewSchedule(leetcodeClient, tgClient, time.Now().In(moscowLoc))
 
 	// Every full hour is a delivery window: subscribers get the post at the
 	// hour they chose, the fixed chats at 11:00. The first run after the host

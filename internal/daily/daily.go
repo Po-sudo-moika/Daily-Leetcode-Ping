@@ -19,19 +19,22 @@ type Sender interface {
 
 // Schedule serves the hourly delivery windows. It remembers the last hour it
 // served today, so a run after the host slept through some windows serves
-// all of them. Nothing is saved: after a restart it starts from the hour of
-// its first run.
+// all of them. Nothing is saved: after a restart it starts from the hour
+// after start-up.
 type Schedule struct {
 	leetcode leetcode.Client
 	sender   Sender
 
 	mu sync.Mutex
-	// served is a time in the last hour served; zero before the first run.
+	// served is a time in the last hour served.
 	served time.Time
 }
 
-func NewSchedule(leetcodeClient leetcode.Client, sender Sender) *Schedule {
-	return &Schedule{leetcode: leetcodeClient, sender: sender}
+// NewSchedule takes the start-up time in Moscow time. Its hour counts as
+// served, so a restart never re-sends an hour an earlier process may have
+// served, and the first run catches up even if the host slept before it.
+func NewSchedule(leetcodeClient leetcode.Client, sender Sender, start time.Time) *Schedule {
+	return &Schedule{leetcode: leetcodeClient, sender: sender, served: start}
 }
 
 // Run serves every Moscow hour of today from the first one not yet served
@@ -42,12 +45,9 @@ func (s *Schedule) Run(ctx context.Context, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	from := now.Hour()
-	if !s.served.IsZero() {
-		from = 0
-		if sameDay(s.served, now) {
-			from = s.served.Hour() + 1
-		}
+	from := 0
+	if sameDay(s.served, now) {
+		from = s.served.Hour() + 1
 	}
 	if from > now.Hour() {
 		return

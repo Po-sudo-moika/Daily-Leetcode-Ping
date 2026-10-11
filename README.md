@@ -17,8 +17,9 @@ sets its description and its command list (`/start`, `/settings`).
 Every full hour the service posts to the subscribers who chose that hour, and
 at 11:00 also to the chats listed in `telegram.telegramChats` in `config.toml`.
 It asks LeetCode for the problem at most once an hour, and only when someone is
-due. If the host sleeps through some hours, the first run after it wakes up
-serves every hour of that day it missed, each once. A fixed
+due. After a start-up it serves from the next full hour. If the host sleeps
+through some hours, the first run after it wakes up serves every hour of that
+day it missed, each once. A fixed
 chat that is also a subscriber gets the post once a day, at its chosen hour.
 The start-up post goes to the fixed chats only, so a restart does not send
 subscribers a second copy.
