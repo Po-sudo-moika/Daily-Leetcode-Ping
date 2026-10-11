@@ -11,7 +11,7 @@ import (
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/leetcode"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/telegram"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/config"
-	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/daily"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/robfig/cron/v3"
@@ -43,7 +43,8 @@ func main() {
 		log.Fatalf("error while creating bot: %v", err)
 	}
 
-	telegram.NewMenu(tgBot, store).Register(tgBot)
+	menu := telegram.NewMenu(tgBot, store)
+	menu.Register(tgBot)
 
 	tgClient, err := telegram.New(tgBot, conf.Telegram.TelegramChats, store)
 	if err != nil {
@@ -55,11 +56,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	if err := menu.Setup(ctx); err != nil {
+		// The bot still works without its profile text, so keep going.
+		log.Printf("error while setting up the bot profile: %v", err)
+	}
+
 	c := cron.New(cron.WithLocation(moscowLoc))
 
-	_, err = c.AddFunc("0 11 * * *", func() {
-		log.Printf("Запуск ежедневной задачи в %s...", time.Now().In(moscowLoc).Format("15:04"))
-		sendDailyPost(ctx, leetcodeClient, tgClient.SendToAll)
+	// Every full hour is a delivery window: subscribers get the post at the
+	// hour they chose, the fixed chats at 11:00.
+	_, err = c.AddFunc("0 * * * *", func() {
+		hour := time.Now().In(moscowLoc).Hour()
+		log.Printf("Запуск ежедневной задачи в %02d:00...", hour)
+		daily.SendWindow(ctx, leetcodeClient, tgClient, hour)
 	})
 	if err != nil {
 		log.Fatal("Ошибка настройки cron:", err)
@@ -67,7 +76,7 @@ func main() {
 
 	// The start-up post goes to the fixed chats only, so a restart does not
 	// send subscribers a second copy of the same problem.
-	sendDailyPost(ctx, leetcodeClient, tgClient.SendToFixedChats)
+	daily.Post(ctx, leetcodeClient, tgClient.SendToFixedChats)
 
 	c.Start()
 	log.Println("Планировщик запущен. Ожидание задач...")
@@ -76,16 +85,4 @@ func main() {
 
 	<-c.Stop().Done()
 	log.Println("Планировщик остановлен")
-}
-
-// sendDailyPost fetches today's problem and hands it to send. A failure is
-// logged and the service keeps running, so the next day still gets a post.
-func sendDailyPost(ctx context.Context, leetcodeClient leetcode.Client, send func(context.Context, domain.DailyQuestion)) {
-	res, err := leetcodeClient.GetCurrentDailyTask(ctx)
-	if err != nil {
-		log.Printf("error while getting daily task: %v", err)
-		return
-	}
-
-	send(ctx, res.Result.ActiveDailyCodingChallengeQuestion)
 }

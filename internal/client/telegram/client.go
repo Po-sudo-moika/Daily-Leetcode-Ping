@@ -3,10 +3,10 @@ package telegram
 import (
 	"context"
 	"errors"
-	"slices"
 	"strconv"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/labstack/gommon/log"
@@ -38,23 +38,51 @@ func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQues
 	c.sendToFixed(ctx, getPostMessageSchema(question))
 }
 
-func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) {
+// fixedChatsHour is the Moscow hour at which the chats from config.toml get
+// the daily post.
+const fixedChatsHour = subscribers.DefaultHour
+
+func (c *client) HasRecipients(hour int) bool {
+	if hour == fixedChatsHour && len(c.fixedOnly()) > 0 {
+		return true
+	}
+
+	return len(c.subscribers.ListAtHour(hour)) > 0
+}
+
+func (c *client) SendForHour(ctx context.Context, hour int, question domain.DailyQuestion) {
 	text := getPostMessageSchema(question)
 
-	c.sendToFixed(ctx, text)
-
-	for _, chatID := range c.subscribers.List() {
-		// A subscriber who is also a fixed chat already got the post.
-		if slices.Contains(c.chats, strconv.FormatInt(chatID, 10)) {
-			continue
+	if hour == fixedChatsHour {
+		for _, chat := range c.fixedOnly() {
+			c.sendMessage(ctx, chat, text)
 		}
+	}
 
+	for _, chatID := range c.subscribers.ListAtHour(hour) {
 		err := c.sendMessage(ctx, chatID, text)
 		if errors.Is(err, bot.ErrorForbidden) {
 			// Telegram says the user blocked the bot (or the chat is gone).
 			c.dropSubscriber(chatID)
 		}
 	}
+}
+
+// fixedOnly returns the fixed chats that have no subscription of their own. A
+// fixed chat that is also a subscriber gets the post once a day, at the hour
+// it chose, instead of at the fixed hour as well.
+func (c *client) fixedOnly() []string {
+	var chats []string
+	for _, chat := range c.chats {
+		if chatID, err := strconv.ParseInt(chat, 10, 64); err == nil {
+			if _, subscribed := c.subscribers.Hour(chatID); subscribed {
+				continue
+			}
+		}
+		chats = append(chats, chat)
+	}
+
+	return chats
 }
 
 func (c *client) sendToFixed(ctx context.Context, text string) {

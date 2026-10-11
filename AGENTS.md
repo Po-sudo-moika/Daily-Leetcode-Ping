@@ -1,6 +1,6 @@
 # Daily-Leetcode-Ping
 
-A small Go service. It posts the LeetCode daily problem to Telegram chats. It posts once at start-up, then every day at 11:00 Europe/Moscow (cron).
+A small Go service. It posts the LeetCode daily problem to Telegram chats. It posts once at start-up, then every day: each subscriber at the hour they chose (Europe/Moscow, default 11:00), the fixed chats at 11:00 (hourly cron).
 
 ## Build, test, run
 
