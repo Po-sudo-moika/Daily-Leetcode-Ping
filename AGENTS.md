@@ -6,7 +6,7 @@ A small Go service. It posts the LeetCode daily problem to Telegram chats. It po
 
 - Go 1.25 (see `go.mod`).
 - Build: `go build ./...`
-- Test: `go test ./...` (there are no tests yet)
+- Test: `go test ./...`
 - Run: `go run ./cmd/` from the repo root. The service reads `config.toml` from the current directory.
 - Docker: the `Dockerfile` builds `./cmd/` into `./service` and runs it.
 
