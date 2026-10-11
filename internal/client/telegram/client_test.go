@@ -76,6 +76,43 @@ func TestSendToFixedChats_AfterFixedHourIsNotRepeated(t *testing.T) {
 	}
 }
 
+// A fixed chat that is also a subscriber at 09:00 and gets the start-up post
+// at 10:15 already had its post for the day: 11:00 does not repeat it.
+func TestSendToFixedChats_SubscribedChatAfterItsHourIsNotRepeated(t *testing.T) {
+	subs := subscribed(5)
+	subs.set(5, 9)
+	api := &fakeAPI{}
+	c, _ := New(api, []string{"5", "@news"}, subs)
+
+	if err := c.SendToFixedChats(context.Background(), at(11, 10, 15), question); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := round(t, c, api, at(11, 11, 0)), []any{"@news"}; !slices.Equal(got, want) {
+		t.Fatalf("11:00 sent to %v, want %v", got, want)
+	}
+}
+
+// A fixed chat that is also a subscriber at 18:00 and gets the start-up post
+// at 14:30 still gets its post at 18:00, the hour it chose.
+func TestSendToFixedChats_SubscribedChatBeforeItsHourKeepsItsPostDue(t *testing.T) {
+	subs := subscribed(5)
+	subs.set(5, 18)
+	api := &fakeAPI{}
+	c, _ := New(api, []string{"5"}, subs)
+
+	if err := c.SendToFixedChats(context.Background(), at(11, 14, 30), question); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := round(t, c, api, at(11, 15, 0)); len(got) != 0 {
+		t.Fatalf("15:00 sent to %v, want nobody", got)
+	}
+	if got, want := round(t, c, api, at(11, 18, 0)), []any{int64(5)}; !slices.Equal(got, want) {
+		t.Fatalf("18:00 sent to %v, want %v", got, want)
+	}
+}
+
 var msk = time.FixedZone("MSK", 3*60*60)
 
 // at is a Moscow time on a day of October 2026.

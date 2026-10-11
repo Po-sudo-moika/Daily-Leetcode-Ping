@@ -26,8 +26,9 @@ hour. It asks LeetCode for the problem at most once an hour, and only when
 someone is due. A fixed chat that is also a subscriber gets the post once a
 day, at its chosen hour.
 The start-up post goes to the fixed chats only, so a restart does not send
-subscribers a second copy. From 11:00 on, the start-up post counts as the fixed
-chats' post for the day, so the next full hour does not repeat it.
+subscribers a second copy. Once a fixed chat's delivery hour has come (11:00,
+or the hour it chose if it is also a subscriber), the start-up post counts as
+its post for the day, so the next full hour does not repeat it.
 If Telegram says a user blocked the bot, that subscriber is dropped.
 
 ## Configuration

@@ -11,9 +11,10 @@ import (
 
 // Client posts the daily question.
 type Client interface {
-	// SendToFixedChats posts only to the chats from config.toml. From their
-	// fixed hour on, now being a Moscow time, the post counts as their
-	// delivery for the day, so the next round does not repeat it.
+	// SendToFixedChats posts only to the chats from config.toml. Once a
+	// chat's delivery hour has come at now, a Moscow time, the post counts as
+	// its delivery for the day, so the next round does not repeat it. That
+	// hour is the one it chose when it is also a subscriber, 11:00 otherwise.
 	SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error
 	// HasDue reports whether anyone is due for today's post at now, a Moscow
 	// time: their delivery hour has come and they have not got the post today.

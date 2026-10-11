@@ -41,7 +41,8 @@ func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question d
 
 	var errs []error
 	for _, chat := range c.chats {
-		if err := c.sendMessage(ctx, chat, text); err == nil && now.Hour() >= fixedChatsHour {
+		err := c.sendMessage(ctx, chat, text)
+		if hour, _ := c.deliveryHour(chat); err == nil && now.Hour() >= hour {
 			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
 		}
 	}
@@ -87,17 +88,15 @@ func (c *client) SendDue(ctx context.Context, now time.Time, question domain.Dai
 	return errors.Join(errs...)
 }
 
-// due returns who is due for the post at now: the fixed chats once
-// fixedChatsHour has come, and the subscribers whose hour has come, each only
-// if they have not got the post today.
+// due returns who is due for the post at now: the fixed chats and the
+// subscribers whose hour has come, each only if they have not got the post
+// today.
 func (c *client) due(now time.Time) (fixed []string, subscribed []int64) {
 	day := now.Format(time.DateOnly)
 
-	if now.Hour() >= fixedChatsHour {
-		for _, chat := range c.fixedOnly() {
-			if !c.subscribers.Delivered(chat, day) {
-				fixed = append(fixed, chat)
-			}
+	for _, chat := range c.fixedOnly() {
+		if hour, _ := c.deliveryHour(chat); now.Hour() >= hour && !c.subscribers.Delivered(chat, day) {
+			fixed = append(fixed, chat)
 		}
 	}
 
@@ -110,15 +109,25 @@ func (c *client) due(now time.Time) (fixed []string, subscribed []int64) {
 func (c *client) fixedOnly() []string {
 	var chats []string
 	for _, chat := range c.chats {
-		if chatID, err := strconv.ParseInt(chat, 10, 64); err == nil {
-			if _, subscribed := c.subscribers.Hour(chatID); subscribed {
-				continue
-			}
+		if _, subscribed := c.deliveryHour(chat); !subscribed {
+			chats = append(chats, chat)
 		}
-		chats = append(chats, chat)
 	}
 
 	return chats
+}
+
+// deliveryHour returns the Moscow delivery hour of a fixed chat: the hour it
+// chose when it is also a subscriber, fixedChatsHour otherwise. The second
+// result reports whether it is a subscriber.
+func (c *client) deliveryHour(chat string) (int, bool) {
+	if chatID, err := strconv.ParseInt(chat, 10, 64); err == nil {
+		if hour, subscribed := c.subscribers.Hour(chatID); subscribed {
+			return hour, true
+		}
+	}
+
+	return fixedChatsHour, false
 }
 
 func (c *client) dropSubscriber(chatID int64) {
