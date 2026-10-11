@@ -1,8 +1,17 @@
 package config
 
+import (
+	"fmt"
+
+	"github.com/BurntSushi/toml"
+)
+
+const DefaultSubscribersPath = "data/subscribers.json"
+
 type Config struct {
 	Service  Service
 	Telegram Telegram
+	Storage  Storage
 }
 
 type Service struct {
@@ -12,6 +21,24 @@ type Service struct {
 }
 
 type Telegram struct {
-	BotCode       string   `toml:"botCode"`
 	TelegramChats []string `toml:"telegramChats"`
+}
+
+type Storage struct {
+	SubscribersPath string `toml:"subscribersPath"`
+}
+
+// Load reads the config file and fills in defaults for optional fields.
+func Load(path string) (Config, error) {
+	var conf Config
+
+	if _, err := toml.DecodeFile(path, &conf); err != nil {
+		return Config{}, fmt.Errorf("decode config file %s: %w", path, err)
+	}
+
+	if conf.Storage.SubscribersPath == "" {
+		conf.Storage.SubscribersPath = DefaultSubscribersPath
+	}
+
+	return conf, nil
 }
