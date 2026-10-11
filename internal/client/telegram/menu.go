@@ -108,8 +108,8 @@ func (m *Menu) Setup(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// HandleStart opens the menu in a new message. It is the one place the menu
-// is sent on request; every button press after it edits that message.
+// HandleStart opens the menu in a new message. Every button press after it
+// edits that message.
 func (m *Menu) HandleStart(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return
