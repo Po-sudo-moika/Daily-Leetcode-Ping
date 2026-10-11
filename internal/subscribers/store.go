@@ -133,6 +133,11 @@ func (s *Store) save() error {
 		tmp.Close()
 		return fmt.Errorf("write subscribers file: %w", err)
 	}
+	// Flush to disk before the rename, so a power loss cannot leave an empty file.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync subscribers file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close subscribers file: %w", err)
 	}

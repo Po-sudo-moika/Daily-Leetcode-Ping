@@ -20,7 +20,7 @@ A small Go service. It posts the LeetCode daily problem to Telegram chats. It po
 
 ## Configuration
 
-`config.toml` holds the service name, version, env, the Telegram bot token (`botCode`) and the chat ids (`telegramChats`).
+`config.toml` holds the service name, version, env, the chat ids (`telegramChats`) and the subscribers file path. The bot token is not in `config.toml`: it comes from the `TELEGRAM_BOT_TOKEN` environment variable or the gitignored `.env` file.
 
 Never commit the real bot token or chat ids. This repo is public. The committed `config.toml` has placeholders only. Keep real values in an uncommitted local copy.
 

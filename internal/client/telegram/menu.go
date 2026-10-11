@@ -106,11 +106,16 @@ func (m *Menu) ackCallback(ctx context.Context, update *models.Update) (int64, b
 		log.Errorf("error while answering callback query: %v", err)
 	}
 
-	if query.Message.Message == nil {
-		return 0, false
+	// Telegram sends an inaccessible message when the menu message is too old.
+	// It still carries the chat, so the buttons keep working.
+	switch {
+	case query.Message.Message != nil:
+		return query.Message.Message.Chat.ID, true
+	case query.Message.InaccessibleMessage != nil:
+		return query.Message.InaccessibleMessage.Chat.ID, true
 	}
 
-	return query.Message.Message.Chat.ID, true
+	return 0, false
 }
 
 func (m *Menu) send(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) {

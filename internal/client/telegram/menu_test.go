@@ -2,7 +2,9 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -196,5 +198,54 @@ func TestCallbackHandlers_IgnoreInaccessibleMessage(t *testing.T) {
 	}
 	if len(api.answered) != 1 {
 		t.Fatal("the button spinner must still be stopped")
+	}
+}
+
+// Telegram sends an inaccessible message when the menu message is too old.
+// The bot library decodes it from JSON when "date" is 0, so build the update
+// the same way.
+func oldMenuUpdate(t *testing.T, chatID int64, data string) *models.Update {
+	t.Helper()
+
+	raw := fmt.Sprintf(`{"update_id":1,"callback_query":{"id":"cb-1","from":{"id":%d},"data":%q,`+
+		`"message":{"message_id":7,"date":0,"chat":{"id":%d,"type":"private"}}}}`, chatID, data, chatID)
+
+	var update models.Update
+	if err := json.Unmarshal([]byte(raw), &update); err != nil {
+		t.Fatal(err)
+	}
+	if update.CallbackQuery.Message.Type != models.MaybeInaccessibleMessageTypeInaccessibleMessage {
+		t.Fatalf("test setup: message type %v, want inaccessible", update.CallbackQuery.Message.Type)
+	}
+
+	return &update
+}
+
+func TestUnsubscribe_WorksFromOldMenuMessage(t *testing.T) {
+	subs := &fakeSubscribers{chats: []int64{10, 20}}
+	menu, api := newMenu(subs)
+
+	menu.HandleUnsubscribe(context.Background(), nil, oldMenuUpdate(t, 10, callbackUnsubscribe))
+
+	if !slices.Equal(subs.chats, []int64{20}) {
+		t.Fatalf("subscribers %v, want [20]", subs.chats)
+	}
+	if len(api.sent) != 1 || api.sent[0].Text != unsubscribedText || api.sent[0].ChatID != int64(10) {
+		t.Fatalf("unexpected reply: %+v", api.sent)
+	}
+}
+
+func TestSubscribeAndAbout_WorkFromOldMenuMessage(t *testing.T) {
+	subs := &fakeSubscribers{}
+	menu, api := newMenu(subs)
+
+	menu.HandleSubscribe(context.Background(), nil, oldMenuUpdate(t, 10, callbackSubscribe))
+	menu.HandleAbout(context.Background(), nil, oldMenuUpdate(t, 10, callbackAbout))
+
+	if !slices.Equal(subs.chats, []int64{10}) {
+		t.Fatalf("subscribers %v, want [10]", subs.chats)
+	}
+	if len(api.sent) != 2 || api.sent[0].Text != subscribedText || api.sent[1].Text != aboutText {
+		t.Fatalf("unexpected replies: %+v", api.sent)
 	}
 }
