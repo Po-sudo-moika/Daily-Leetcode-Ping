@@ -34,9 +34,7 @@ func TestSendToFixedChats_SkipsSubscribers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.SendToFixedChats(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToFixedChats(context.Background(), question)
 
 	if want := []any{"111", "@news"}; !slices.Equal(api.recipients(), want) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)
@@ -50,9 +48,7 @@ func TestSendToAll_FixedChatsAndSubscribers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.SendToAll(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToAll(context.Background(), question)
 
 	if want := []any{"111", int64(5), int64(6)}; !slices.Equal(api.recipients(), want) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)
@@ -68,9 +64,7 @@ func TestSendToAll_NoFixedChats(t *testing.T) {
 	api := &fakeAPI{}
 	c, _ := New(api, nil, &fakeSubscribers{chats: []int64{5}})
 
-	if err := c.SendToAll(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToAll(context.Background(), question)
 
 	if want := []any{int64(5)}; !slices.Equal(api.recipients(), want) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)
@@ -81,9 +75,7 @@ func TestSendToAll_NoDuplicateWhenSubscriberIsAFixedChat(t *testing.T) {
 	api := &fakeAPI{}
 	c, _ := New(api, []string{"5"}, &fakeSubscribers{chats: []int64{5, 6}})
 
-	if err := c.SendToAll(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToAll(context.Background(), question)
 
 	if want := []any{"5", int64(6)}; !slices.Equal(api.recipients(), want) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)
@@ -95,9 +87,7 @@ func TestSendToAll_DropsSubscriberWhoBlockedTheBot(t *testing.T) {
 	subs := &fakeSubscribers{chats: []int64{5, 6}}
 	c, _ := New(api, nil, subs)
 
-	if err := c.SendToAll(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToAll(context.Background(), question)
 
 	if !slices.Equal(subs.chats, []int64{6}) {
 		t.Fatalf("subscribers %v, want [6]", subs.chats)
@@ -112,9 +102,7 @@ func TestSendToAll_KeepsSubscriberOnOtherErrors(t *testing.T) {
 	subs := &fakeSubscribers{chats: []int64{5}}
 	c, _ := New(api, nil, subs)
 
-	if err := c.SendToAll(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToAll(context.Background(), question)
 
 	if !slices.Equal(subs.chats, []int64{5}) {
 		t.Fatalf("a temporary error must keep the subscriber: %v", subs.chats)
@@ -126,9 +114,7 @@ func TestSendToAll_KeepsFixedChatWhenForbidden(t *testing.T) {
 	subs := &fakeSubscribers{chats: []int64{6}}
 	c, _ := New(api, []string{"111"}, subs)
 
-	if err := c.SendToAll(context.Background(), question); err != nil {
-		t.Fatal(err)
-	}
+	c.SendToAll(context.Background(), question)
 
 	if want := []any{"111", int64(6)}; !slices.Equal(api.recipients(), want) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)

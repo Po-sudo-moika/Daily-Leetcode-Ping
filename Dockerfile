@@ -10,6 +10,4 @@ COPY . .
 
 RUN go build -o service ./cmd/
 
-EXPOSE 80 443 22
-
 CMD [ "./service" ]

@@ -11,9 +11,9 @@ import (
 // Client posts the daily question.
 type Client interface {
 	// SendToFixedChats posts only to the chats from config.toml.
-	SendToFixedChats(ctx context.Context, question domain.DailyQuestion) error
+	SendToFixedChats(ctx context.Context, question domain.DailyQuestion)
 	// SendToAll posts to the fixed chats and to every subscriber.
-	SendToAll(ctx context.Context, question domain.DailyQuestion) error
+	SendToAll(ctx context.Context, question domain.DailyQuestion)
 }
 
 // API is the part of *bot.Bot that this package uses. Tests replace it.

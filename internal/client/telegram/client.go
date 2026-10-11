@@ -34,13 +34,11 @@ func New(api API, chats []string, subscribers Subscribers) (Client, error) {
 	}, nil
 }
 
-func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQuestion) error {
+func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQuestion) {
 	c.sendToFixed(ctx, getPostMessageSchema(question))
-
-	return nil
 }
 
-func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) error {
+func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) {
 	text := getPostMessageSchema(question)
 
 	c.sendToFixed(ctx, text)
@@ -57,8 +55,6 @@ func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) e
 			c.dropSubscriber(chatID)
 		}
 	}
-
-	return nil
 }
 
 func (c *client) sendToFixed(ctx context.Context, text string) {

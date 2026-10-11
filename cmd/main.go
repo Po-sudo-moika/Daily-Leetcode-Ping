@@ -80,14 +80,12 @@ func main() {
 
 // sendDailyPost fetches today's problem and hands it to send. A failure is
 // logged and the service keeps running, so the next day still gets a post.
-func sendDailyPost(ctx context.Context, leetcodeClient leetcode.Client, send func(context.Context, domain.DailyQuestion) error) {
+func sendDailyPost(ctx context.Context, leetcodeClient leetcode.Client, send func(context.Context, domain.DailyQuestion)) {
 	res, err := leetcodeClient.GetCurrentDailyTask(ctx)
 	if err != nil {
 		log.Printf("error while getting daily task: %v", err)
 		return
 	}
 
-	if err := send(ctx, res.Result.ActiveDailyCodingChallengeQuestion); err != nil {
-		log.Printf("error while sending daily post: %v", err)
-	}
+	send(ctx, res.Result.ActiveDailyCodingChallengeQuestion)
 }
