@@ -84,14 +84,6 @@ func (s *Store) Remove(chatID int64) (bool, error) {
 	return true, nil
 }
 
-func (s *Store) Has(chatID int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	_, ok := s.chats[chatID]
-	return ok
-}
-
 // List returns the subscribed chat ids in ascending order.
 func (s *Store) List() []int64 {
 	s.mu.Lock()
