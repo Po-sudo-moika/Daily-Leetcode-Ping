@@ -21,11 +21,13 @@ file records the Moscow date of each chat's last post, so every chat gets the
 post once a day. The first run after the host wakes up, or after a restart,
 catches up on the hours it missed. A send that fails is tried again the next
 hour. After a change of hour, a chat that already got today's post waits for
-tomorrow; one that has not gets it at the next full hour. It asks LeetCode for
-the problem at most once an hour, and only when someone is due. A fixed
-chat that is also a subscriber gets the post once a day, at its chosen hour.
+tomorrow; one that has not gets it at the first full hour at or after its new
+hour. It asks LeetCode for the problem at most once an hour, and only when
+someone is due. A fixed chat that is also a subscriber gets the post once a
+day, at its chosen hour.
 The start-up post goes to the fixed chats only, so a restart does not send
-subscribers a second copy.
+subscribers a second copy. From 11:00 on, the start-up post counts as the fixed
+chats' post for the day, so the next full hour does not repeat it.
 If Telegram says a user blocked the bot, that subscriber is dropped.
 
 ## Configuration

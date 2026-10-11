@@ -37,10 +37,42 @@ func TestSendToFixedChats_SkipsSubscribers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c.SendToFixedChats(context.Background(), question)
+	if err := c.SendToFixedChats(context.Background(), at(11, 10, 30), question); err != nil {
+		t.Fatal(err)
+	}
 
 	if want := []any{"111", "@news"}; !slices.Equal(api.recipients(), want) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)
+	}
+}
+
+// A start-up before 11:00 leaves the fixed chats' 11:00 post due as before.
+func TestSendToFixedChats_BeforeFixedHourKeepsTodaysPostDue(t *testing.T) {
+	api := &fakeAPI{}
+	c, _ := New(api, []string{"111", "@news"}, subscribed())
+
+	if err := c.SendToFixedChats(context.Background(), at(11, 10, 30), question); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := round(t, c, api, at(11, 11, 0)), []any{"111", "@news"}; !slices.Equal(got, want) {
+		t.Fatalf("11:00 sent to %v, want %v", got, want)
+	}
+}
+
+// A start-up after 11:00 counts as the fixed chats' post for the day, except
+// for a chat Telegram did not accept it for: the next round sends to that one.
+func TestSendToFixedChats_AfterFixedHourIsNotRepeated(t *testing.T) {
+	api := &fakeAPI{sendErr: map[any]error{"@news": context.DeadlineExceeded}}
+	c, _ := New(api, []string{"111", "@news"}, subscribed())
+
+	if err := c.SendToFixedChats(context.Background(), at(11, 14, 30), question); err != nil {
+		t.Fatal(err)
+	}
+
+	api.sendErr = nil
+	if got, want := round(t, c, api, at(11, 15, 0)), []any{"@news"}; !slices.Equal(got, want) {
+		t.Fatalf("15:00 sent to %v, want %v", got, want)
 	}
 }
 

@@ -35,8 +35,18 @@ func New(api API, chats []string, subscribers Subscribers) (Client, error) {
 	}, nil
 }
 
-func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQuestion) {
-	c.sendToFixed(ctx, getPostMessageSchema(question))
+func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
+	text := getPostMessageSchema(question)
+	day := now.Format(time.DateOnly)
+
+	var errs []error
+	for _, chat := range c.chats {
+		if err := c.sendMessage(ctx, chat, text); err == nil && now.Hour() >= fixedChatsHour {
+			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // fixedChatsHour is the Moscow hour at which the chats from config.toml get
@@ -109,12 +119,6 @@ func (c *client) fixedOnly() []string {
 	}
 
 	return chats
-}
-
-func (c *client) sendToFixed(ctx context.Context, text string) {
-	for _, chatID := range c.chats {
-		c.sendMessage(ctx, chatID, text)
-	}
 }
 
 func (c *client) dropSubscriber(chatID int64) {

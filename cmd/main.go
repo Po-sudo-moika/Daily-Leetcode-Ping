@@ -80,10 +80,10 @@ func main() {
 	}
 
 	// The start-up post goes to the fixed chats only, so a restart does not
-	// send subscribers a second copy of the same problem.
+	// send subscribers a second copy of the same problem. From 11:00 on it
+	// counts as their post for the day.
 	daily.Post(ctx, leetcodeClient, func(ctx context.Context, question domain.DailyQuestion) error {
-		tgClient.SendToFixedChats(ctx, question)
-		return nil
+		return tgClient.SendToFixedChats(ctx, time.Now().In(moscowLoc), question)
 	})
 
 	c.Start()
