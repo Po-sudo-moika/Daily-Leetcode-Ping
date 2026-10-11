@@ -31,28 +31,36 @@ var ErrInvalidHour = errors.New("hour out of range")
 // ErrNotSubscribed means the chat has no subscription.
 var ErrNotSubscribed = errors.New("chat is not subscribed")
 
-// Store keeps the subscribers and their delivery hour in a small JSON file,
-// so that subscriptions survive a restart. It is safe for concurrent use.
+// Store keeps the subscribers, their delivery hour and the day each chat last
+// got the post in a small JSON file, so that all of it survives a restart. It
+// is safe for concurrent use.
+//
+// A day is a Moscow date in time.DateOnly form, such as "2026-10-11". A chat
+// in the delivery records is a subscriber's id or a chat from config.toml.
 type Store struct {
 	path string
 
 	mu sync.Mutex
 	// chats maps a subscribed chat id to its Moscow delivery hour.
 	chats map[int64]int
+	// delivered maps a chat to the last day it got the post.
+	delivered map[string]string
 }
 
 // fileData is the file format. Chats is the original format and stays a plain
 // list of ids, so a file written before delivery hours existed loads as is and
 // an older build can still read a newer file. Hours lists only the chats that
-// chose something other than DefaultHour, keyed by chat id.
+// chose something other than DefaultHour, keyed by chat id. Delivered maps a
+// chat to the last day it got the post.
 type fileData struct {
-	Chats []int64        `json:"chats"`
-	Hours map[string]int `json:"hours,omitempty"`
+	Chats     []int64           `json:"chats"`
+	Hours     map[string]int    `json:"hours,omitempty"`
+	Delivered map[string]string `json:"delivered,omitempty"`
 }
 
 // Open loads the store from path. A missing file is an empty store.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, chats: make(map[int64]int)}
+	s := &Store{path: path, chats: make(map[int64]int), delivered: make(map[string]string)}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -81,6 +89,10 @@ func Open(path string) (*Store, error) {
 		if _, ok := s.chats[chatID]; ok && validHour(hour) {
 			s.chats[chatID] = hour
 		}
+	}
+
+	for chat, day := range data.Delivered {
+		s.delivered[chat] = day
 	}
 
 	return s, nil
@@ -163,20 +175,47 @@ func (s *Store) SetHour(chatID int64, hour int) error {
 	return nil
 }
 
-// ListAtHour returns the chats whose delivery hour is hour, in ascending order.
-func (s *Store) ListAtHour(hour int) []int64 {
+// Due returns the subscribed chats whose delivery hour is at or before hour
+// and that have not got the post on day, in ascending order.
+func (s *Store) Due(hour int, day string) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var chats []int64
 	for chatID, h := range s.chats {
-		if h == hour {
+		if h <= hour && s.delivered[strconv.FormatInt(chatID, 10)] != day {
 			chats = append(chats, chatID)
 		}
 	}
 	slices.Sort(chats)
 
 	return chats
+}
+
+// Delivered reports whether chat got the post on day.
+func (s *Store) Delivered(chat, day string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.delivered[chat] == day
+}
+
+// MarkDelivered records that chat got the post on day. Records of other days
+// are dropped: for deciding who is due on day they mean the same as none, and
+// this keeps chats that left from piling up in the file. A failed save keeps
+// the record in memory, because the post did go out and must not go again.
+func (s *Store) MarkDelivered(chat, day string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for other, d := range s.delivered {
+		if d != day {
+			delete(s.delivered, other)
+		}
+	}
+	s.delivered[chat] = day
+
+	return s.save()
 }
 
 func (s *Store) sorted() []int64 {
@@ -192,7 +231,7 @@ func (s *Store) sorted() []int64 {
 // save writes to a temporary file and renames it, so a crash never leaves a
 // half-written store behind. The caller holds s.mu.
 func (s *Store) save() error {
-	data := fileData{Chats: s.sorted()}
+	data := fileData{Chats: s.sorted(), Delivered: s.delivered}
 	for chatID, hour := range s.chats {
 		if hour == DefaultHour {
 			continue

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 	"github.com/go-telegram/bot"
@@ -12,12 +13,13 @@ import (
 type Client interface {
 	// SendToFixedChats posts only to the chats from config.toml.
 	SendToFixedChats(ctx context.Context, question domain.DailyQuestion)
-	// HasRecipients reports whether anyone gets the post at this Moscow hour.
-	HasRecipients(hour int) bool
-	// SendForHour posts to everyone whose delivery hour is this Moscow hour:
-	// the subscribers who chose it, and the chats from config.toml at their
-	// fixed hour.
-	SendForHour(ctx context.Context, hour int, question domain.DailyQuestion)
+	// HasDue reports whether anyone is due for today's post at now, a Moscow
+	// time: their delivery hour has come and they have not got the post today.
+	HasDue(now time.Time) bool
+	// SendDue posts to everyone due at now, a Moscow time: the subscribers
+	// whose chosen hour has come, and the chats from config.toml once their
+	// fixed hour has come. It records each successful delivery.
+	SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error
 }
 
 // API is the part of *bot.Bot that this package uses. Tests replace it.
@@ -37,5 +39,11 @@ type Subscribers interface {
 	// Hour returns the Moscow delivery hour; false when not subscribed.
 	Hour(chatID int64) (int, bool)
 	SetHour(chatID int64, hour int) error
-	ListAtHour(hour int) []int64
+	// Due returns the subscribers whose hour is at or before hour and who
+	// have not got the post on day.
+	Due(hour int, day string) []int64
+	// Delivered reports whether chat got the post on day.
+	Delivered(chat, day string) bool
+	// MarkDelivered records that chat got the post on day.
+	MarkDelivered(chat, day string) error
 }

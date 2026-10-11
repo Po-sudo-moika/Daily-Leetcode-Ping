@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
@@ -42,37 +43,55 @@ func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQues
 // the daily post.
 const fixedChatsHour = subscribers.DefaultHour
 
-func (c *client) HasRecipients(hour int) bool {
-	fixed, subscribed := c.recipients(hour)
+func (c *client) HasDue(now time.Time) bool {
+	fixed, subscribed := c.due(now)
 
 	return len(fixed) > 0 || len(subscribed) > 0
 }
 
-func (c *client) SendForHour(ctx context.Context, hour int, question domain.DailyQuestion) {
+// SendDue records a delivery only after Telegram accepted the message, so a
+// chat that failed is due again at the next run.
+func (c *client) SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
 	text := getPostMessageSchema(question)
-	fixed, subscribed := c.recipients(hour)
+	day := now.Format(time.DateOnly)
+	fixed, subscribed := c.due(now)
 
+	var errs []error
 	for _, chat := range fixed {
-		c.sendMessage(ctx, chat, text)
+		if err := c.sendMessage(ctx, chat, text); err == nil {
+			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
+		}
 	}
 
 	for _, chatID := range subscribed {
 		err := c.sendMessage(ctx, chatID, text)
-		if errors.Is(err, bot.ErrorForbidden) {
+		switch {
+		case err == nil:
+			errs = append(errs, c.subscribers.MarkDelivered(strconv.FormatInt(chatID, 10), day))
+		case errors.Is(err, bot.ErrorForbidden):
 			// Telegram says the user blocked the bot (or the chat is gone).
 			c.dropSubscriber(chatID)
 		}
 	}
+
+	return errors.Join(errs...)
 }
 
-// recipients returns who gets the post at this Moscow hour: the fixed chats
-// at fixedChatsHour, and the subscribers who chose this hour.
-func (c *client) recipients(hour int) (fixed []string, subscribed []int64) {
-	if hour == fixedChatsHour {
-		fixed = c.fixedOnly()
+// due returns who is due for the post at now: the fixed chats once
+// fixedChatsHour has come, and the subscribers whose hour has come, each only
+// if they have not got the post today.
+func (c *client) due(now time.Time) (fixed []string, subscribed []int64) {
+	day := now.Format(time.DateOnly)
+
+	if now.Hour() >= fixedChatsHour {
+		for _, chat := range c.fixedOnly() {
+			if !c.subscribers.Delivered(chat, day) {
+				fixed = append(fixed, chat)
+			}
+		}
 	}
 
-	return fixed, c.subscribers.ListAtHour(hour)
+	return fixed, c.subscribers.Due(now.Hour(), day)
 }
 
 // fixedOnly returns the fixed chats that have no subscription of their own. A

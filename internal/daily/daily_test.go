@@ -27,143 +27,71 @@ func (f *fakeLeetcode) GetCurrentDailyTask(context.Context) (domain.Task, error)
 	}}}, nil
 }
 
-// fakeSender has recipients at the hours in due.
+// fakeSender has the chats in due waiting for the post until SendDue
+// delivers it to them, like the Telegram client.
 type fakeSender struct {
-	due  []int
-	sent []int
+	due  []string
+	sent []string
 	got  []string
+	at   []time.Time
 }
 
-func (f *fakeSender) HasRecipients(hour int) bool { return slices.Contains(f.due, hour) }
+func (f *fakeSender) HasDue(time.Time) bool { return len(f.due) > 0 }
 
-func (f *fakeSender) SendForHour(_ context.Context, hour int, q domain.DailyQuestion) {
-	f.sent = append(f.sent, hour)
+func (f *fakeSender) SendDue(_ context.Context, now time.Time, q domain.DailyQuestion) error {
+	f.sent = append(f.sent, f.due...)
+	f.due = nil
 	f.got = append(f.got, q.Quest.Title)
+	f.at = append(f.at, now)
+
+	return nil
 }
 
-var moscow = time.FixedZone("MSK", 3*60*60)
+var round = time.Date(2026, time.October, 11, 14, 10, 0, 0, time.FixedZone("MSK", 3*60*60))
 
-func at(day, hour, minute int) time.Time {
-	return time.Date(2026, time.October, day, hour, minute, 0, 0, moscow)
-}
-
-// The start-up hour and the hours before it count as served, so a restart
-// never re-sends them.
-func TestSchedule_FirstRunServesFromHourAfterStartUp(t *testing.T) {
+func TestDeliver_FetchesOnceAndSendsToEveryoneDue(t *testing.T) {
 	lc := &fakeLeetcode{title: "Two Sum"}
-	sender := &fakeSender{due: []int{9, 10, 11}}
+	sender := &fakeSender{due: []string{"5", "@news"}}
 
-	NewSchedule(lc, sender, at(11, 10, 30)).Run(context.Background(), at(11, 11, 0))
+	Deliver(context.Background(), lc, sender, round)
 
 	if lc.calls != 1 {
-		t.Fatalf("fetched %d times, want 1 for the run", lc.calls)
+		t.Fatalf("fetched %d times, want 1 for the round", lc.calls)
 	}
-	if !slices.Equal(sender.sent, []int{11}) || sender.got[0] != "Two Sum" {
-		t.Fatalf("sent %v %v, want only hour 11 with the fetched problem", sender.sent, sender.got)
+	if !slices.Equal(sender.sent, []string{"5", "@news"}) || !slices.Equal(sender.got, []string{"Two Sum"}) {
+		t.Fatalf("sent to %v with %v, want both chats with the fetched problem", sender.sent, sender.got)
 	}
-}
-
-// The service starts at 08:40 and the host sleeps from 08:50 to 14:10, so
-// the first run is on wake-up: it serves 09 through 14 with one fetch.
-func TestSchedule_CatchesUpWhenHostSleepsBeforeFirstRun(t *testing.T) {
-	lc := &fakeLeetcode{title: "Two Sum"}
-	sender := &fakeSender{due: []int{8, 9, 10, 11, 12, 13, 14, 15}}
-
-	NewSchedule(lc, sender, at(11, 8, 40)).Run(context.Background(), at(11, 14, 10))
-
-	if !slices.Equal(sender.sent, []int{9, 10, 11, 12, 13, 14}) || lc.calls != 1 {
-		t.Fatalf("sent %v with %d fetches, want [9 10 11 12 13 14] with 1", sender.sent, lc.calls)
+	if !slices.Equal(sender.at, []time.Time{round}) {
+		t.Fatalf("sent for %v, want the round's time", sender.at)
 	}
 }
 
-// A day of hourly runs asks LeetCode only for the hours somebody is due,
-// and each time for the current problem.
-func TestSchedule_OneFetchPerBusyHour(t *testing.T) {
-	lc := &fakeLeetcode{title: "Two Sum"}
-	sender := &fakeSender{due: []int{4, 9, 11}}
-	s := NewSchedule(lc, sender, at(10, 23, 30))
-
-	for hour := 0; hour < 24; hour++ {
-		s.Run(context.Background(), at(11, hour, 0))
-	}
-
-	if lc.calls != 3 {
-		t.Fatalf("fetched %d times, want 3 (one per hour with recipients)", lc.calls)
-	}
-	if !slices.Equal(sender.sent, []int{4, 9, 11}) {
-		t.Fatalf("sent for hours %v, want [4 9 11]", sender.sent)
-	}
-}
-
-// The host sleeps from 10:30 to 14:10: the run on wake-up serves 11 (the
-// fixed chats' hour) through 14 with one fetch, and later runs go on from
-// there, so every hour is served exactly once.
-func TestSchedule_CatchesUpAfterHostSleeps(t *testing.T) {
-	lc := &fakeLeetcode{title: "Two Sum"}
-	sender := &fakeSender{due: []int{9, 11, 12, 13, 14, 15}}
-	s := NewSchedule(lc, sender, at(11, 8, 30))
-	ctx := context.Background()
-
-	s.Run(ctx, at(11, 9, 0))
-	s.Run(ctx, at(11, 10, 0))
-	s.Run(ctx, at(11, 14, 10))
-	if !slices.Equal(sender.sent, []int{9, 11, 12, 13, 14}) || lc.calls != 2 {
-		t.Fatalf("after wake-up: sent %v with %d fetches, want [9 11 12 13 14] with 2", sender.sent, lc.calls)
-	}
-
-	s.Run(ctx, at(11, 15, 0))
-	if !slices.Equal(sender.sent, []int{9, 11, 12, 13, 14, 15}) || lc.calls != 3 {
-		t.Fatalf("next hour: sent %v with %d fetches, want [9 11 12 13 14 15] with 3", sender.sent, lc.calls)
-	}
-}
-
-func TestSchedule_SecondRunInSameHourSendsNothing(t *testing.T) {
-	lc := &fakeLeetcode{title: "Two Sum"}
-	sender := &fakeSender{due: []int{11}}
-	s := NewSchedule(lc, sender, at(11, 10, 30))
-
-	s.Run(context.Background(), at(11, 11, 0))
-	s.Run(context.Background(), at(11, 11, 30))
-
-	if !slices.Equal(sender.sent, []int{11}) || lc.calls != 1 {
-		t.Fatalf("sent %v with %d fetches, want [11] once", sender.sent, lc.calls)
-	}
-}
-
-// Sleeping past midnight serves today's hours from 00:00, and not the hours
-// missed yesterday: those subscribers get today's problem at their own hour.
-func TestSchedule_NewDayStartsFromMidnight(t *testing.T) {
-	lc := &fakeLeetcode{title: "Two Sum"}
-	sender := &fakeSender{due: []int{9, 11, 23}}
-	s := NewSchedule(lc, sender, at(11, 21, 30))
-
-	s.Run(context.Background(), at(11, 22, 0))
-	s.Run(context.Background(), at(12, 12, 5))
-
-	if !slices.Equal(sender.sent, []int{9, 11}) || lc.calls != 1 {
-		t.Fatalf("sent %v with %d fetches, want [9 11] with 1", sender.sent, lc.calls)
-	}
-}
-
-func TestSchedule_NoRecipientsMeansNoFetch(t *testing.T) {
+func TestDeliver_NobodyDueMeansNoFetch(t *testing.T) {
 	lc := &fakeLeetcode{}
-	sender := &fakeSender{due: []int{9}}
+	sender := &fakeSender{}
 
-	NewSchedule(lc, sender, at(11, 9, 30)).Run(context.Background(), at(11, 10, 0))
+	Deliver(context.Background(), lc, sender, round)
 
-	if lc.calls != 0 || len(sender.sent) != 0 {
-		t.Fatalf("calls=%d sent=%v, want nothing", lc.calls, sender.sent)
+	if lc.calls != 0 || len(sender.got) != 0 {
+		t.Fatalf("calls=%d sends=%v, want nothing", lc.calls, sender.got)
 	}
 }
 
-func TestSchedule_FetchFailureSendsNothing(t *testing.T) {
-	lc := &fakeLeetcode{err: errors.New("leetcode is down")}
-	sender := &fakeSender{due: []int{9}}
+// LeetCode is down on the wake-up round: nobody is sent or recorded, so the
+// next round delivers to the same chats.
+func TestDeliver_FetchFailureRecordsNothing(t *testing.T) {
+	lc := &fakeLeetcode{err: errors.New("leetcode is down"), title: "Two Sum"}
+	sender := &fakeSender{due: []string{"5", "@news"}}
 
-	NewSchedule(lc, sender, at(11, 8, 30)).Run(context.Background(), at(11, 9, 0))
+	Deliver(context.Background(), lc, sender, round)
+	if len(sender.sent) != 0 || !slices.Equal(sender.due, []string{"5", "@news"}) {
+		t.Fatalf("after a failed fetch: sent %v, still due %v", sender.sent, sender.due)
+	}
 
-	if len(sender.sent) != 0 {
-		t.Fatalf("sent %v after a failed fetch", sender.sent)
+	lc.err = nil
+	Deliver(context.Background(), lc, sender, round.Add(50*time.Minute))
+	if !slices.Equal(sender.sent, []string{"5", "@news"}) {
+		t.Fatalf("next round sent to %v, want [5 @news]", sender.sent)
 	}
 }
 
@@ -171,8 +99,9 @@ func TestPost_SendsFetchedProblem(t *testing.T) {
 	lc := &fakeLeetcode{title: "Two Sum"}
 	var got string
 
-	Post(context.Background(), lc, func(_ context.Context, q domain.DailyQuestion) {
+	Post(context.Background(), lc, func(_ context.Context, q domain.DailyQuestion) error {
 		got = q.Quest.Title
+		return errors.New("send failed, only logged")
 	})
 
 	if got != "Two Sum" {

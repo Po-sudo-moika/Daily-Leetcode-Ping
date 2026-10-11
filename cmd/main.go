@@ -12,6 +12,7 @@ import (
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/telegram"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/config"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/daily"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/robfig/cron/v3"
@@ -61,16 +62,18 @@ func main() {
 		log.Printf("error while setting up the bot profile: %v", err)
 	}
 
-	c := cron.New(cron.WithLocation(moscowLoc))
-	schedule := daily.NewSchedule(leetcodeClient, tgClient, time.Now().In(moscowLoc))
+	// A round still running when the next one starts makes the next one skip,
+	// so two rounds never send the same post; the round after catches up.
+	c := cron.New(cron.WithLocation(moscowLoc), cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)))
 
-	// Every full hour is a delivery window: subscribers get the post at the
-	// hour they chose, the fixed chats at 11:00. The first run after the host
-	// wakes up also serves the windows it slept through today.
+	// Every full hour, everyone whose delivery hour has come and who has not
+	// got today's post gets it: subscribers from the hour they chose, the
+	// fixed chats from 11:00. So the first round after the host wakes up, or
+	// after a restart, catches up on the hours it missed.
 	_, err = c.AddFunc("0 * * * *", func() {
 		now := time.Now().In(moscowLoc)
 		log.Printf("Запуск ежедневной задачи в %s...", now.Format("15:04"))
-		schedule.Run(ctx, now)
+		daily.Deliver(ctx, leetcodeClient, tgClient, now)
 	})
 	if err != nil {
 		log.Fatal("Ошибка настройки cron:", err)
@@ -78,7 +81,10 @@ func main() {
 
 	// The start-up post goes to the fixed chats only, so a restart does not
 	// send subscribers a second copy of the same problem.
-	daily.Post(ctx, leetcodeClient, tgClient.SendToFixedChats)
+	daily.Post(ctx, leetcodeClient, func(ctx context.Context, question domain.DailyQuestion) error {
+		tgClient.SendToFixedChats(ctx, question)
+		return nil
+	})
 
 	c.Start()
 	log.Println("Планировщик запущен. Ожидание задач...")

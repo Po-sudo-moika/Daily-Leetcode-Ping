@@ -4,88 +4,44 @@ package daily
 import (
 	"context"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/leetcode"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 )
 
-// Sender delivers the post for one Moscow hour.
+// Sender delivers the post to everyone who is due for it.
 type Sender interface {
-	HasRecipients(hour int) bool
-	SendForHour(ctx context.Context, hour int, question domain.DailyQuestion)
+	HasDue(now time.Time) bool
+	SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error
 }
 
-// Schedule serves the hourly delivery windows. It remembers the last hour it
-// served today, so a run after the host slept through some windows serves
-// all of them. Nothing is saved: after a restart it starts from the hour
-// after start-up.
-type Schedule struct {
-	leetcode leetcode.Client
-	sender   Sender
-
-	mu sync.Mutex
-	// served is a time in the last hour served.
-	served time.Time
-}
-
-// NewSchedule takes the start-up time in Moscow time. Its hour counts as
-// served, so a restart never re-sends an hour an earlier process may have
-// served, and the first run catches up even if the host slept before it.
-func NewSchedule(leetcodeClient leetcode.Client, sender Sender, start time.Time) *Schedule {
-	return &Schedule{leetcode: leetcodeClient, sender: sender, served: start}
-}
-
-// Run serves every Moscow hour of today from the first one not yet served
-// through the hour of now, each once. now must be in Moscow time. It fetches
-// the current problem once for the whole run, and not at all when nobody is
-// due, so LeetCode is asked at most once an hour.
-func (s *Schedule) Run(ctx context.Context, now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	from := 0
-	if sameDay(s.served, now) {
-		from = s.served.Hour() + 1
-	}
-	if from > now.Hour() {
-		return
-	}
-	s.served = now
-
-	var due []int
-	for hour := from; hour <= now.Hour(); hour++ {
-		if s.sender.HasRecipients(hour) {
-			due = append(due, hour)
-		}
-	}
-	if len(due) == 0 {
+// Deliver runs one delivery round at now, a Moscow time. Everyone whose hour
+// has come and who has not got today's post gets it, so a round after the
+// host slept or after a restart catches up on the hours it missed. It fetches
+// the current problem once for the round, and not at all when nobody is due,
+// so LeetCode is asked at most once an hour. A failed fetch sends nothing and
+// records nothing, so the next round tries again.
+func Deliver(ctx context.Context, leetcodeClient leetcode.Client, sender Sender, now time.Time) {
+	if !sender.HasDue(now) {
 		return
 	}
 
-	Post(ctx, s.leetcode, func(ctx context.Context, question domain.DailyQuestion) {
-		for _, hour := range due {
-			s.sender.SendForHour(ctx, hour, question)
-		}
+	Post(ctx, leetcodeClient, func(ctx context.Context, question domain.DailyQuestion) error {
+		return sender.SendDue(ctx, now, question)
 	})
 }
 
-func sameDay(a, b time.Time) bool {
-	ay, am, ad := a.Date()
-	by, bm, bd := b.Date()
-
-	return ay == by && am == bm && ad == bd
-}
-
 // Post fetches today's problem and hands it to send. A failure is logged and
-// the service keeps running, so the next window still gets a post.
-func Post(ctx context.Context, leetcodeClient leetcode.Client, send func(context.Context, domain.DailyQuestion)) {
+// the service keeps running, so the next round still gets a post.
+func Post(ctx context.Context, leetcodeClient leetcode.Client, send func(context.Context, domain.DailyQuestion) error) {
 	res, err := leetcodeClient.GetCurrentDailyTask(ctx)
 	if err != nil {
 		log.Printf("error while getting daily task: %v", err)
 		return
 	}
 
-	send(ctx, res.Result.ActiveDailyCodingChallengeQuestion)
+	if err := send(ctx, res.Result.ActiveDailyCodingChallengeQuestion); err != nil {
+		log.Printf("error while sending daily post: %v", err)
+	}
 }

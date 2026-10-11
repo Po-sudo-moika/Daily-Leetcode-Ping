@@ -14,12 +14,15 @@ sets its description and its command list (`/start`, `/settings`).
   previous day's problem.
 - **О проекте** — short description and a link to this repository.
 
-Every full hour the service posts to the subscribers who chose that hour, and
-at 11:00 also to the chats listed in `telegram.telegramChats` in `config.toml`.
-It asks LeetCode for the problem at most once an hour, and only when someone is
-due. After a start-up it serves from the next full hour. If the host sleeps
-through some hours, the first run after it wakes up serves every hour of that
-day it missed, each once. A fixed
+Every full hour the service posts to everyone whose hour has come and who has
+not got today's post yet: subscribers from the hour they chose, and the chats
+listed in `telegram.telegramChats` in `config.toml` from 11:00. The subscribers
+file records the Moscow date of each chat's last post, so every chat gets the
+post once a day. The first run after the host wakes up, or after a restart,
+catches up on the hours it missed. A send that fails is tried again the next
+hour. After a change of hour, a chat that already got today's post waits for
+tomorrow; one that has not gets it at the next full hour. It asks LeetCode for
+the problem at most once an hour, and only when someone is due. A fixed
 chat that is also a subscriber gets the post once a day, at its chosen hour.
 The start-up post goes to the fixed chats only, so a restart does not send
 subscribers a second copy.

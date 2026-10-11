@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
@@ -92,9 +93,11 @@ func (f *fakeAPI) recipients() []any {
 	return out
 }
 
-// fakeSubscribers keeps the delivery hour per chat, like the real store.
+// fakeSubscribers keeps the delivery hour per chat and the last day each
+// chat got the post, like the real store.
 type fakeSubscribers struct {
 	hours     map[int64]int
+	delivered map[string]string
 	failWrite error
 }
 
@@ -171,16 +174,29 @@ func (f *fakeSubscribers) SetHour(chatID int64, hour int) error {
 	return nil
 }
 
-func (f *fakeSubscribers) ListAtHour(hour int) []int64 {
+func (f *fakeSubscribers) Due(hour int, day string) []int64 {
 	var out []int64
 	for chatID, h := range f.hours {
-		if h == hour {
+		if h <= hour && !f.Delivered(strconv.FormatInt(chatID, 10), day) {
 			out = append(out, chatID)
 		}
 	}
 	slices.Sort(out)
 
 	return out
+}
+
+func (f *fakeSubscribers) Delivered(chat, day string) bool {
+	return f.delivered[chat] == day
+}
+
+func (f *fakeSubscribers) MarkDelivered(chat, day string) error {
+	if f.delivered == nil {
+		f.delivered = map[string]string{}
+	}
+	f.delivered[chat] = day
+
+	return f.failWrite
 }
 
 // callbackUpdate is a button press on menu message 77 of the chat.

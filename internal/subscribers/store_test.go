@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,15 +23,13 @@ func openTemp(t *testing.T) (*Store, string) {
 	return s, path
 }
 
-// subscribed returns every subscribed chat, at any hour, in ascending order.
-func subscribed(s *Store) []int64 {
-	var chats []int64
-	for hour := MinHour; hour <= MaxHour; hour++ {
-		chats = append(chats, s.ListAtHour(hour)...)
-	}
-	slices.Sort(chats)
+// today is the Moscow day the tests deliver on.
+const today = "2026-10-11"
 
-	return chats
+// subscribed returns every subscribed chat in ascending order: with nothing
+// delivered today, everyone is due at the last hour.
+func subscribed(s *Store) []int64 {
+	return s.Due(MaxHour, today)
 }
 
 func TestOpen_MissingFileIsEmpty(t *testing.T) {
@@ -74,7 +71,7 @@ func TestAddRemove(t *testing.T) {
 	}
 }
 
-func TestListAtHourIsSorted(t *testing.T) {
+func TestDueIsSorted(t *testing.T) {
 	s, _ := openTemp(t)
 
 	for _, id := range []int64{30, -100123, 5} {
@@ -84,7 +81,7 @@ func TestListAtHourIsSorted(t *testing.T) {
 	}
 
 	want := []int64{-100123, 5, 30}
-	if got := s.ListAtHour(DefaultHour); !reflect.DeepEqual(got, want) {
+	if got := s.Due(DefaultHour, today); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
@@ -219,8 +216,11 @@ func TestOpen_OldFormatKeepsEveryoneAtDefaultHour(t *testing.T) {
 			t.Errorf("chat %d: hour=%d ok=%v, want %d", chatID, hour, ok, DefaultHour)
 		}
 	}
-	if got := s.ListAtHour(DefaultHour); !reflect.DeepEqual(got, want) {
-		t.Fatalf("at default hour %v, want %v", got, want)
+	if got := s.Due(DefaultHour, today); !reflect.DeepEqual(got, want) {
+		t.Fatalf("due at default hour %v, want %v", got, want)
+	}
+	if got := s.Due(DefaultHour-1, today); len(got) != 0 {
+		t.Fatalf("due before the default hour %v, want nobody", got)
 	}
 }
 
@@ -270,11 +270,11 @@ func TestSetHour(t *testing.T) {
 	if err := s.SetHour(1, 8); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.ListAtHour(8); !reflect.DeepEqual(got, []int64{1}) {
-		t.Fatalf("at 8: %v, want [1]", got)
+	if got := s.Due(8, today); !reflect.DeepEqual(got, []int64{1}) {
+		t.Fatalf("due at 8: %v, want [1]", got)
 	}
-	if got := s.ListAtHour(DefaultHour); !reflect.DeepEqual(got, []int64{2}) {
-		t.Fatalf("at default: %v, want [2]", got)
+	if got := s.Due(DefaultHour, today); !reflect.DeepEqual(got, []int64{1, 2}) {
+		t.Fatalf("due at default: %v, want [1 2]", got)
 	}
 
 	reopened, err := Open(path)
@@ -398,5 +398,150 @@ func TestOpen_IgnoresStrayHours(t *testing.T) {
 func TestOpen_BadHoursKey(t *testing.T) {
 	if _, err := Open(writeFile(t, `{"chats":[1],"hours":{"abc":9}}`)); err == nil {
 		t.Fatal("want an error for a non-numeric chat id")
+	}
+}
+
+func TestDue_SkipsChatsDeliveredThatDay(t *testing.T) {
+	s, _ := openTemp(t)
+	for _, id := range []int64{1, 2} {
+		if _, err := s.Add(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.MarkDelivered("1", today); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.Due(MaxHour, today); !reflect.DeepEqual(got, []int64{2}) {
+		t.Fatalf("due today %v, want [2]", got)
+	}
+	if got := s.Due(MaxHour, "2026-10-12"); !reflect.DeepEqual(got, []int64{1, 2}) {
+		t.Fatalf("due the next day %v, want [1 2]", got)
+	}
+}
+
+// Deliveries to subscribers and to fixed chats from config.toml are read back
+// after a restart.
+func TestMarkDelivered_SurvivesRestart(t *testing.T) {
+	s, path := openTemp(t)
+	if _, err := s.Add(1); err != nil {
+		t.Fatal(err)
+	}
+	for _, chat := range []string{"1", "@news"} {
+		if err := s.MarkDelivered(chat, today); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chat := range []string{"1", "@news"} {
+		if !reopened.Delivered(chat, today) {
+			t.Errorf("%s: delivery lost on restart", chat)
+		}
+	}
+	if reopened.Delivered("2", today) {
+		t.Error("chat 2 never got the post")
+	}
+	if got := reopened.Due(MaxHour, today); len(got) != 0 {
+		t.Fatalf("due after restart %v, want nobody", got)
+	}
+}
+
+func TestMarkDelivered_DropsOlderDays(t *testing.T) {
+	s, path := openTemp(t)
+	if err := s.MarkDelivered("@old", "2026-10-10"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDelivered("@news", today); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data fileData
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"@news": today}; !reflect.DeepEqual(data.Delivered, want) {
+		t.Fatalf("deliveries in file %v, want %v", data.Delivered, want)
+	}
+}
+
+// The post did go out, so a failed save must not make the chat due again.
+func TestMarkDelivered_KeepsRecordWhenSaveFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sub", "subscribers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MarkDelivered("@news", today); err == nil {
+		t.Fatal("want a save error")
+	}
+	if !s.Delivered("@news", today) {
+		t.Fatal("the delivery must stay recorded")
+	}
+}
+
+// A file from before deliveries were recorded loads with nobody delivered,
+// keeps its hours, and after the first delivery an older build still reads
+// the chats.
+func TestOldFormats_LoadWithNothingDelivered(t *testing.T) {
+	for name, tc := range map[string]struct {
+		content string
+		hour5   int
+	}{
+		"chats only":      {oldFormat, DefaultHour},
+		"chats and hours": {`{"chats":[-100123,5,30],"hours":{"5":9}}`, 9},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeFile(t, tc.content)
+			s, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := []int64{-100123, 5, 30}
+			if got := s.Due(MaxHour, today); !reflect.DeepEqual(got, want) {
+				t.Fatalf("due %v, want everyone %v", got, want)
+			}
+
+			if err := s.MarkDelivered("5", today); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := reopened.Due(MaxHour, today); !reflect.DeepEqual(got, []int64{-100123, 30}) {
+				t.Fatalf("due after a delivery and a restart %v, want [-100123 30]", got)
+			}
+			if hour, _ := reopened.Hour(5); hour != tc.hour5 {
+				t.Fatalf("hour of chat 5 %d, want %d", hour, tc.hour5)
+			}
+
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var old struct {
+				Chats []int64 `json:"chats"`
+			}
+			if err := json.Unmarshal(raw, &old); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(old.Chats, want) {
+				t.Fatalf("chats in file %v, want %v", old.Chats, want)
+			}
+		})
 	}
 }
