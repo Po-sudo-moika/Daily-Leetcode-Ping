@@ -24,8 +24,11 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env file (holds the bot token)
 .env
+
+# subscriptions saved by the bot
+/data/
 
 # Editor/IDE
 # .idea/

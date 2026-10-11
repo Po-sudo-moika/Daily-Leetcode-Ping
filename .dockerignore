@@ -1,0 +1,4 @@
+# Keep secrets and local state out of the image.
+.env
+data/
+.git

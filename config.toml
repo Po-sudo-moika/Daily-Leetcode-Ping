@@ -3,8 +3,14 @@ name = "LeetcodePingService"
 version = "1.0.0"
 env = "production"
 
+# The bot token is NOT stored here. Set TELEGRAM_BOT_TOKEN (see README.md).
 [telegram]
-botCode = "your bot id"
+# Fixed recipients. They get the start-up post and the daily post,
+# in addition to everyone who subscribed through the bot menu.
 telegramChats = [
 	"your chat id"
 ]
+
+[storage]
+# Where subscriptions are kept. Mount this folder as a Docker volume.
+subscribersPath = "data/subscribers.json"
