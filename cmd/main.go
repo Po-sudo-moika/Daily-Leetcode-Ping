@@ -62,13 +62,15 @@ func main() {
 	}
 
 	c := cron.New(cron.WithLocation(moscowLoc))
+	schedule := daily.NewSchedule(leetcodeClient, tgClient)
 
 	// Every full hour is a delivery window: subscribers get the post at the
-	// hour they chose, the fixed chats at 11:00.
+	// hour they chose, the fixed chats at 11:00. The first run after the host
+	// wakes up also serves the windows it slept through today.
 	_, err = c.AddFunc("0 * * * *", func() {
-		hour := time.Now().In(moscowLoc).Hour()
-		log.Printf("Запуск ежедневной задачи в %02d:00...", hour)
-		daily.SendWindow(ctx, leetcodeClient, tgClient, hour)
+		now := time.Now().In(moscowLoc)
+		log.Printf("Запуск ежедневной задачи в %s...", now.Format("15:04"))
+		schedule.Run(ctx, now)
 	})
 	if err != nil {
 		log.Fatal("Ошибка настройки cron:", err)

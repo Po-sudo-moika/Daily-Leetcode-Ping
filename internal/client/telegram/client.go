@@ -43,29 +43,36 @@ func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQues
 const fixedChatsHour = subscribers.DefaultHour
 
 func (c *client) HasRecipients(hour int) bool {
-	if hour == fixedChatsHour && len(c.fixedOnly()) > 0 {
-		return true
-	}
+	fixed, subscribed := c.recipients(hour)
 
-	return len(c.subscribers.ListAtHour(hour)) > 0
+	return len(fixed) > 0 || len(subscribed) > 0
 }
 
 func (c *client) SendForHour(ctx context.Context, hour int, question domain.DailyQuestion) {
 	text := getPostMessageSchema(question)
+	fixed, subscribed := c.recipients(hour)
 
-	if hour == fixedChatsHour {
-		for _, chat := range c.fixedOnly() {
-			c.sendMessage(ctx, chat, text)
-		}
+	for _, chat := range fixed {
+		c.sendMessage(ctx, chat, text)
 	}
 
-	for _, chatID := range c.subscribers.ListAtHour(hour) {
+	for _, chatID := range subscribed {
 		err := c.sendMessage(ctx, chatID, text)
 		if errors.Is(err, bot.ErrorForbidden) {
 			// Telegram says the user blocked the bot (or the chat is gone).
 			c.dropSubscriber(chatID)
 		}
 	}
+}
+
+// recipients returns who gets the post at this Moscow hour: the fixed chats
+// at fixedChatsHour, and the subscribers who chose this hour.
+func (c *client) recipients(hour int) (fixed []string, subscribed []int64) {
+	if hour == fixedChatsHour {
+		fixed = c.fixedOnly()
+	}
+
+	return fixed, c.subscribers.ListAtHour(hour)
 }
 
 // fixedOnly returns the fixed chats that have no subscription of their own. A

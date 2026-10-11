@@ -179,14 +179,6 @@ func (s *Store) ListAtHour(hour int) []int64 {
 	return chats
 }
 
-// List returns the subscribed chat ids in ascending order.
-func (s *Store) List() []int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.sorted()
-}
-
 func (s *Store) sorted() []int64 {
 	chats := make([]int64, 0, len(s.chats))
 	for chatID := range s.chats {

@@ -24,10 +24,21 @@ func openTemp(t *testing.T) (*Store, string) {
 	return s, path
 }
 
+// subscribed returns every subscribed chat, at any hour, in ascending order.
+func subscribed(s *Store) []int64 {
+	var chats []int64
+	for hour := MinHour; hour <= MaxHour; hour++ {
+		chats = append(chats, s.ListAtHour(hour)...)
+	}
+	slices.Sort(chats)
+
+	return chats
+}
+
 func TestOpen_MissingFileIsEmpty(t *testing.T) {
 	s, path := openTemp(t)
 
-	if got := s.List(); len(got) != 0 {
+	if got := subscribed(s); len(got) != 0 {
 		t.Fatalf("got %v, want empty", got)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -46,7 +57,7 @@ func TestAddRemove(t *testing.T) {
 	if err != nil || added {
 		t.Fatalf("second add: added=%v err=%v", added, err)
 	}
-	if !slices.Contains(s.List(), 42) {
+	if _, ok := s.Hour(42); !ok {
 		t.Fatal("42 must be subscribed")
 	}
 
@@ -58,12 +69,12 @@ func TestAddRemove(t *testing.T) {
 	if err != nil || removed {
 		t.Fatalf("second remove: removed=%v err=%v", removed, err)
 	}
-	if slices.Contains(s.List(), 42) {
+	if _, ok := s.Hour(42); ok {
 		t.Fatal("42 must not be subscribed")
 	}
 }
 
-func TestListIsSorted(t *testing.T) {
+func TestListAtHourIsSorted(t *testing.T) {
 	s, _ := openTemp(t)
 
 	for _, id := range []int64{30, -100123, 5} {
@@ -73,7 +84,7 @@ func TestListIsSorted(t *testing.T) {
 	}
 
 	want := []int64{-100123, 5, 30}
-	if got := s.List(); !reflect.DeepEqual(got, want) {
+	if got := s.ListAtHour(DefaultHour); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
@@ -96,7 +107,7 @@ func TestSurvivesRestart(t *testing.T) {
 	}
 
 	want := []int64{1, 3}
-	if got := reopened.List(); !reflect.DeepEqual(got, want) {
+	if got := subscribed(reopened); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
@@ -144,7 +155,7 @@ func TestAdd_RollsBackWhenSaveFails(t *testing.T) {
 	if _, err := s.Add(7); err == nil {
 		t.Fatal("want a save error")
 	}
-	if slices.Contains(s.List(), 7) {
+	if _, ok := s.Hour(7); ok {
 		t.Fatal("a failed add must not stay in memory")
 	}
 }
@@ -168,7 +179,7 @@ func TestConcurrentAdd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(reopened.List()); got != 20 {
+	if got := len(subscribed(reopened)); got != 20 {
 		t.Fatalf("got %d subscribers, want 20", got)
 	}
 }
@@ -200,7 +211,7 @@ func TestOpen_OldFormatKeepsEveryoneAtDefaultHour(t *testing.T) {
 	}
 
 	want := []int64{-100123, 5, 30}
-	if got := s.List(); !reflect.DeepEqual(got, want) {
+	if got := subscribed(s); !reflect.DeepEqual(got, want) {
 		t.Fatalf("subscribers %v, want %v", got, want)
 	}
 	for _, chatID := range want {
