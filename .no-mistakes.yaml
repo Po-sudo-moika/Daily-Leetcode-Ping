@@ -1,0 +1,5 @@
+# Per-repo no-mistakes settings. `no-mistakes ci-workflow` turns these
+# commands into .github/workflows/ci.yml.
+commands:
+  lint: 'go vet ./...'
+  test: 'go test ./...'
