@@ -3,10 +3,11 @@ package telegram
 import (
 	"context"
 	"errors"
-	"slices"
 	"strconv"
+	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/labstack/gommon/log"
@@ -34,33 +35,99 @@ func New(api API, chats []string, subscribers Subscribers) (Client, error) {
 	}, nil
 }
 
-func (c *client) SendToFixedChats(ctx context.Context, question domain.DailyQuestion) {
-	c.sendToFixed(ctx, getPostMessageSchema(question))
+func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
+	text := getPostMessageSchema(question)
+	day := now.Format(time.DateOnly)
+
+	var errs []error
+	for _, chat := range c.chats {
+		err := c.sendMessage(ctx, chat, text)
+		if hour, _ := c.deliveryHour(chat); err == nil && now.Hour() >= hour {
+			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
-func (c *client) SendToAll(ctx context.Context, question domain.DailyQuestion) {
+// fixedChatsHour is the Moscow hour at which the chats from config.toml get
+// the daily post.
+const fixedChatsHour = subscribers.DefaultHour
+
+func (c *client) HasDue(now time.Time) bool {
+	fixed, subscribed := c.due(now)
+
+	return len(fixed) > 0 || len(subscribed) > 0
+}
+
+// SendDue records a delivery only after Telegram accepted the message, so a
+// chat that failed is due again at the next run.
+func (c *client) SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
 	text := getPostMessageSchema(question)
+	day := now.Format(time.DateOnly)
+	fixed, subscribed := c.due(now)
 
-	c.sendToFixed(ctx, text)
-
-	for _, chatID := range c.subscribers.List() {
-		// A subscriber who is also a fixed chat already got the post.
-		if slices.Contains(c.chats, strconv.FormatInt(chatID, 10)) {
-			continue
+	var errs []error
+	for _, chat := range fixed {
+		if err := c.sendMessage(ctx, chat, text); err == nil {
+			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
 		}
+	}
 
+	for _, chatID := range subscribed {
 		err := c.sendMessage(ctx, chatID, text)
-		if errors.Is(err, bot.ErrorForbidden) {
+		switch {
+		case err == nil:
+			errs = append(errs, c.subscribers.MarkDelivered(strconv.FormatInt(chatID, 10), day))
+		case errors.Is(err, bot.ErrorForbidden):
 			// Telegram says the user blocked the bot (or the chat is gone).
 			c.dropSubscriber(chatID)
 		}
 	}
+
+	return errors.Join(errs...)
 }
 
-func (c *client) sendToFixed(ctx context.Context, text string) {
-	for _, chatID := range c.chats {
-		c.sendMessage(ctx, chatID, text)
+// due returns who is due for the post at now: the fixed chats and the
+// subscribers whose hour has come, each only if they have not got the post
+// today.
+func (c *client) due(now time.Time) (fixed []string, subscribed []int64) {
+	day := now.Format(time.DateOnly)
+
+	for _, chat := range c.fixedOnly() {
+		if hour, _ := c.deliveryHour(chat); now.Hour() >= hour && !c.subscribers.Delivered(chat, day) {
+			fixed = append(fixed, chat)
+		}
 	}
+
+	return fixed, c.subscribers.Due(now.Hour(), day)
+}
+
+// fixedOnly returns the fixed chats that have no subscription of their own. A
+// fixed chat that is also a subscriber gets the post once a day, at the hour
+// it chose, instead of at the fixed hour as well.
+func (c *client) fixedOnly() []string {
+	var chats []string
+	for _, chat := range c.chats {
+		if _, subscribed := c.deliveryHour(chat); !subscribed {
+			chats = append(chats, chat)
+		}
+	}
+
+	return chats
+}
+
+// deliveryHour returns the Moscow delivery hour of a fixed chat: the hour it
+// chose when it is also a subscriber, fixedChatsHour otherwise. The second
+// result reports whether it is a subscriber.
+func (c *client) deliveryHour(chat string) (int, bool) {
+	if chatID, err := strconv.ParseInt(chat, 10, 64); err == nil {
+		if hour, subscribed := c.subscribers.Hour(chatID); subscribed {
+			return hour, true
+		}
+	}
+
+	return fixedChatsHour, false
 }
 
 func (c *client) dropSubscriber(chatID int64) {

@@ -1,6 +1,6 @@
 # Daily-Leetcode-Ping
 
-A small Go service. It posts the LeetCode daily problem to Telegram chats. It posts once at start-up, then every day at 11:00 Europe/Moscow (cron).
+A small Go service. It posts the LeetCode daily problem to Telegram chats. It posts once at start-up, then every day: each subscriber at the hour they chose (Europe/Moscow, default 11:00), the fixed chats at 11:00 (hourly cron).
 
 ## Build, test, run
 
@@ -12,7 +12,8 @@ A small Go service. It posts the LeetCode daily problem to Telegram chats. It po
 
 ## Code layout
 
-- `cmd/main.go`: entry point, cron schedule, sends the post.
+- `cmd/main.go`: entry point, cron schedule.
+- `internal/daily`: fetches the daily problem and runs the hourly delivery round.
 - `internal/config`: config structs.
 - `internal/client/leetcode`: LeetCode API client.
 - `internal/client/telegram`: Telegram client and message text.

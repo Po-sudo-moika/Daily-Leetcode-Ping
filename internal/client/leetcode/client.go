@@ -7,18 +7,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 	"github.com/labstack/gommon/log"
 )
 
 type client struct {
-	URL string
+	URL  string
+	http *http.Client
 }
 
 func New(url string) Client {
 	return &client{
-		URL: url,
+		URL:  url,
+		http: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -46,7 +49,13 @@ func (l *client) GetCurrentDailyTask(ctx context.Context) (domain.Task, error) {
 		return domain.Task{}, err
 	}
 
-	resp, err := http.Post(l.URL+"/graphql", "application/json", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.URL+"/graphql", bytes.NewReader(b))
+	if err != nil {
+		return domain.Task{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := l.http.Do(req)
 	if err != nil {
 		return domain.Task{}, err
 	}
