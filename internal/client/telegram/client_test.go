@@ -499,6 +499,53 @@ func TestSendDue_KeepsChatOnOtherErrors(t *testing.T) {
 	}
 }
 
+func TestResolveFixedChats_LooksUpEachNameOnce(t *testing.T) {
+	api := &fakeAPI{chatIDs: map[string]int64{"@mygroup": group}}
+
+	got := ResolveFixedChats(context.Background(), api, []string{"111", "@mygroup", "@gone"})
+
+	if want := []string{"111", "-1001", "@gone"}; !slices.Equal(got, want) {
+		t.Fatalf("fixed chats %v, want %v", got, want)
+	}
+	var asked []any
+	for _, params := range api.gotChats {
+		asked = append(asked, params.ChatID)
+	}
+	if want := []any{"@mygroup", "@gone"}; !slices.Equal(asked, want) {
+		t.Fatalf("looked up %v, want %v", asked, want)
+	}
+}
+
+// A fixed chat given by @name is found at start-up. When a member presses
+// Subscribe and picks 09:00, the chat gets one post a day, at 09:00. A name
+// that cannot be found still gets its post by name, at 11:00.
+func TestFixedChatByName_GetsOnePostADayAtTheHourItChose(t *testing.T) {
+	ctx := context.Background()
+	fixed := ResolveFixedChats(ctx, &fakeAPI{chatIDs: map[string]int64{"@mygroup": group}}, []string{"@mygroup", "@gone"})
+	subs := subscribed()
+	b, _ := newRegisteredBot(t, subs, fixed...)
+
+	b.ProcessUpdate(ctx, callbackUpdate(group, callbackSubscribe))
+	b.ProcessUpdate(ctx, callbackUpdate(group, callbackHourPrefix+"9"))
+
+	api := &fakeAPI{}
+	c, _ := New(api, fixed, subs)
+	var got []string
+	for hour := subscribers.MinHour; hour <= subscribers.MaxHour; hour++ {
+		before := len(api.sent)
+		if err := c.SendDue(ctx, at(11, hour, 0), question); err != nil {
+			t.Fatal(err)
+		}
+		for _, msg := range api.sent[before:] {
+			got = append(got, fmt.Sprintf("%s %v", hourLabel(hour), msg.ChatID))
+		}
+	}
+
+	if want := []string{"09:00 -1001", "11:00 @gone"}; !slices.Equal(got, want) {
+		t.Fatalf("posts of the day %q, want %q", got, want)
+	}
+}
+
 func TestSendDue_EveryKindOfChatGetsTheSamePost(t *testing.T) {
 	subs := subscribed(private, group, -1002)
 	api := &fakeAPI{}

@@ -258,43 +258,42 @@ func TestFirstContact_OldIdOfAnUpgradedGroupIsNotSubscribed(t *testing.T) {
 	}
 }
 
-// A fixed chat listed by its @name already gets the post as a fixed chat. If
-// meeting it subscribed its id too, it would get the post twice a day.
-func TestFirstContact_FixedChatListedByNameGetsOnePostADay(t *testing.T) {
-	const numeric = int64(-1002)
-	fixed := []string{"@MyGroup", "-1002"}
-	subs := subscribed()
-	b, _ := newRegisteredBot(t, subs, fixed...)
-	ctx := context.Background()
+// When Telegram turns a group into a supergroup, the supergroup's first
+// message names the old id. The group keeps its choice under the new id.
+func TestFirstContact_UpgradedGroupKeepsItsChoice(t *testing.T) {
+	const supergroup = int64(-1009)
+	upgraded := &models.Update{Message: &models.Message{
+		Chat:              models.Chat{ID: supergroup, Type: models.ChatTypeSupergroup},
+		MigrateFromChatID: group,
+	}}
 
-	inGroup := func(chatID int64, username string, update *models.Update) *models.Update {
-		chat := models.Chat{ID: chatID, Type: models.ChatTypeSupergroup, Username: username}
-		if update.Message != nil {
-			update.Message.Chat = chat
-		} else {
-			update.MyChatMember.Chat = chat
+	t.Run("unsubscribed", func(t *testing.T) {
+		store := openStore(t, filepath.Join(t.TempDir(), "subscribers.json"), nil)
+		b, _ := newRegisteredBot(t, store)
+		ctx := context.Background()
+
+		b.ProcessUpdate(ctx, callbackUpdate(group, callbackUnsubscribe))
+		b.ProcessUpdate(ctx, upgraded)
+		b.ProcessUpdate(ctx, commandUpdate(supergroup, "/start"))
+
+		if _, ok := store.Hour(supergroup); ok {
+			t.Fatal("a group that pressed Unsubscribe must stay out as a supergroup")
 		}
-		return update
-	}
-	b.ProcessUpdate(ctx, inGroup(group, "mygroup", commandUpdate(group, "/settings")))
-	b.ProcessUpdate(ctx, inGroup(group, "mygroup", myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeMember, models.ChatMemberTypeLeft)))
-	b.ProcessUpdate(ctx, inGroup(group, "mygroup", myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeLeft, models.ChatMemberTypeMember)))
-	b.ProcessUpdate(ctx, inGroup(numeric, "", commandUpdate(numeric, "/start")))
+	})
 
-	if want := []int64{numeric}; !slices.Equal(subs.chats(), want) {
-		t.Fatalf("subscribers %v, want %v: only the fixed chat listed by its id is met", subs.chats(), want)
-	}
+	t.Run("subscribed", func(t *testing.T) {
+		store := openStore(t, filepath.Join(t.TempDir(), "subscribers.json"), map[int64]int{group: 15})
+		b, _ := newRegisteredBot(t, store)
 
-	api := &fakeAPI{}
-	c, _ := New(api, fixed, subs)
-	for hour := 11; hour <= 12; hour++ {
-		if err := c.SendDue(ctx, at(11, hour, 0), question); err != nil {
-			t.Fatal(err)
+		b.ProcessUpdate(context.Background(), upgraded)
+
+		if hour, ok := store.Hour(supergroup); !ok || hour != 15 {
+			t.Fatalf("hour=%d subscribed=%v, want the supergroup at 15", hour, ok)
 		}
-	}
-	if want := []any{"@MyGroup", numeric}; !slices.Equal(api.recipients(), want) {
-		t.Fatalf("the posts of the day went to %v, want %v", api.recipients(), want)
-	}
+		if _, ok := store.Hour(group); ok {
+			t.Fatal("the old id must be gone")
+		}
+	})
 }
 
 func TestFirstContact_KeepsTheHourOfASubscriber(t *testing.T) {

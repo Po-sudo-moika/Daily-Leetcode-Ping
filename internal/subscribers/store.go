@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -206,6 +207,45 @@ func (s *Store) Drop(chatID int64) (bool, error) {
 	delete(s.chats, chatID)
 	if err := s.save(); err != nil {
 		s.chats[chatID] = hour
+		return false, err
+	}
+
+	return true, nil
+}
+
+// Migrate moves a chat to its new id when Telegram turns a group into a
+// supergroup: its subscription and hour, or its Unsubscribe, and the day it
+// last got the post. The old id is forgotten. It reports whether there was
+// anything to move. A failed save leaves the store as it was.
+func (s *Store) Migrate(from, to int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	hour, subscribed := s.chats[from]
+	if !subscribed && !s.optedOut[from] {
+		return false, nil
+	}
+
+	chats, optedOut, delivered := maps.Clone(s.chats), maps.Clone(s.optedOut), maps.Clone(s.delivered)
+
+	delete(s.chats, to)
+	delete(s.optedOut, to)
+	if subscribed {
+		s.chats[to] = hour
+	} else {
+		s.optedOut[to] = true
+	}
+	delete(s.chats, from)
+	delete(s.optedOut, from)
+
+	fromKey := strconv.FormatInt(from, 10)
+	if day, ok := s.delivered[fromKey]; ok {
+		s.delivered[strconv.FormatInt(to, 10)] = day
+		delete(s.delivered, fromKey)
+	}
+
+	if err := s.save(); err != nil {
+		s.chats, s.optedOut, s.delivered = chats, optedOut, delivered
 		return false, err
 	}
 

@@ -33,6 +33,7 @@ type API interface {
 	SetMyCommands(ctx context.Context, params *bot.SetMyCommandsParams) (bool, error)
 	SetMyDescription(ctx context.Context, params *bot.SetMyDescriptionParams) (bool, error)
 	SetMyShortDescription(ctx context.Context, params *bot.SetMyShortDescriptionParams) (bool, error)
+	GetChat(ctx context.Context, params *bot.GetChatParams) (*models.ChatFullInfo, error)
 }
 
 // Subscribers is the subscription storage.
@@ -49,6 +50,9 @@ type Subscribers interface {
 	// Drop unsubscribes a chat that cannot get the post any more. It is not
 	// a choice: Meet subscribes the chat again when it comes back.
 	Drop(chatID int64) (bool, error)
+	// Migrate moves a group's subscription and hour, or its Unsubscribe, to
+	// the new id Telegram gave it as a supergroup.
+	Migrate(from, to int64) (bool, error)
 	// Hour returns the Moscow delivery hour; false when not subscribed.
 	Hour(chatID int64) (int, bool)
 	SetHour(chatID int64, hour int) error

@@ -704,6 +704,92 @@ func TestMeetRemoveDrop_RollBackWhenSaveFails(t *testing.T) {
 	}
 }
 
+func TestMigrate_UpgradedGroupKeepsItsChoice(t *testing.T) {
+	const (
+		optedOutGroup, optedOutSupergroup     = int64(-1), int64(-1001)
+		subscribedGroup, subscribedSupergroup = int64(-2), int64(-1002)
+	)
+	s, path := openTemp(t)
+	if _, err := s.Remove(optedOutGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(subscribedGroup); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetHour(subscribedGroup, 15); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDelivered("-2", today); err != nil {
+		t.Fatal(err)
+	}
+
+	for from, to := range map[int64]int64{optedOutGroup: optedOutSupergroup, subscribedGroup: subscribedSupergroup} {
+		if moved, err := s.Migrate(from, to); err != nil || !moved {
+			t.Fatalf("migrate %d: moved=%v err=%v, want moved", from, moved, err)
+		}
+	}
+
+	restarted, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, store := range map[string]*Store{"before restart": s, "after restart": restarted} {
+		if met, err := store.Meet(optedOutSupergroup); err != nil || met {
+			t.Fatalf("%s: met=%v err=%v, the opted-out supergroup must stay out", name, met, err)
+		}
+		if hour, ok := store.Hour(subscribedSupergroup); !ok || hour != 15 {
+			t.Fatalf("%s: hour=%d subscribed=%v, want the supergroup at 15", name, hour, ok)
+		}
+		if !store.Delivered("-1002", today) {
+			t.Fatalf("%s: the supergroup must keep today's delivery", name)
+		}
+		if _, ok := store.Hour(subscribedGroup); ok {
+			t.Fatalf("%s: the old id must be gone", name)
+		}
+	}
+}
+
+func TestMigrate_UnknownChatChangesNothing(t *testing.T) {
+	s, _ := openTemp(t)
+
+	if moved, err := s.Migrate(-1, -1001); err != nil || moved {
+		t.Fatalf("moved=%v err=%v, want nothing moved", moved, err)
+	}
+	if met, _ := s.Meet(-1001); !met {
+		t.Fatal("a new id with nothing moved to it is met as usual")
+	}
+}
+
+func TestMigrate_RollsBackWhenSaveFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sub", "subscribers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(-1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "sub", "subscribers.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Migrate(-1, -1001); err == nil {
+		t.Fatal("want a save error")
+	}
+	if _, ok := s.Hour(-1); !ok {
+		t.Fatal("a failed migrate must keep the old id")
+	}
+	if _, ok := s.Hour(-1001); ok {
+		t.Fatal("a failed migrate must not subscribe the new id")
+	}
+}
+
 // A file written before unsubscribed chats were recorded loads unchanged.
 func TestOpen_FileWithoutOptOutsLoadsUnchanged(t *testing.T) {
 	s, err := Open(writeFile(t, `{"chats":[5,30],"hours":{"5":9},"delivered":{"5":"`+today+`"}}`))

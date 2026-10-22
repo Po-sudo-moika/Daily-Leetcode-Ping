@@ -36,6 +36,28 @@ func New(api API, chats []string, subscribers Subscribers) (Client, error) {
 	}, nil
 }
 
+// ResolveFixedChats looks up the id of each fixed chat given by its @name,
+// with one getChat call each. From then on the chat is matched by its id, like
+// a fixed chat given by id: if it is also a subscriber, it gets one post a day,
+// at the hour it chose. A name that cannot be looked up is logged and kept, so
+// the chat still gets the post by name.
+func ResolveFixedChats(ctx context.Context, api API, chats []string) []string {
+	resolved := make([]string, 0, len(chats))
+	for _, chat := range chats {
+		if strings.HasPrefix(chat, "@") {
+			info, err := api.GetChat(ctx, &bot.GetChatParams{ChatID: chat})
+			if err != nil {
+				log.Errorf("fixed chat %s could not be looked up, it gets the post by name: %v", chat, err)
+			} else {
+				chat = strconv.FormatInt(info.ID, 10)
+			}
+		}
+		resolved = append(resolved, chat)
+	}
+
+	return resolved
+}
+
 func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
 	text := getPostMessageSchema(question)
 	day := now.Format(time.DateOnly)

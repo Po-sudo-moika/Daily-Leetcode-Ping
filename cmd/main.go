@@ -39,23 +39,25 @@ func main() {
 		log.Fatal("Ошибка загрузки таймзоны:", err)
 	}
 
-	tgBot, err := bot.New(token, telegram.BotOptions(store, conf.Telegram.TelegramChats)...)
+	tgBot, err := bot.New(token, telegram.BotOptions(store)...)
 	if err != nil {
 		log.Fatalf("error while creating bot: %v", err)
 	}
 
-	menu := telegram.NewMenu(tgBot, store, conf.Telegram.TelegramChats)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	fixedChats := telegram.ResolveFixedChats(ctx, tgBot, conf.Telegram.TelegramChats)
+
+	menu := telegram.NewMenu(tgBot, store, fixedChats)
 	menu.Register(tgBot)
 
-	tgClient, err := telegram.New(tgBot, conf.Telegram.TelegramChats, store)
+	tgClient, err := telegram.New(tgBot, fixedChats, store)
 	if err != nil {
 		log.Fatalf("error while creating telegram client: %v", err)
 	}
 
 	leetcodeClient := leetcode.New("https://leetcode.com")
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	if err := menu.Setup(ctx); err != nil {
 		// The bot still works without its profile text, so keep going.

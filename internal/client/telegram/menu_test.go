@@ -634,6 +634,28 @@ func TestSetup_ReportsErrorsButTriesEverything(t *testing.T) {
 	}
 }
 
+// A fixed chat gets the post even without a subscription of its own, so the
+// menu must not tell it the post is off.
+func TestWelcome_FixedChatWithoutSubscriptionIsToldItGetsThePost(t *testing.T) {
+	api := &fakeAPI{}
+	menu := NewMenu(api, subscribed(group), []string{"-1001", "@gone"})
+	ctx := context.Background()
+
+	menu.HandleUnsubscribe(ctx, nil, callbackUpdate(group, callbackUnsubscribe))
+	if len(api.edited) != 1 || api.edited[0].Text != fixedStatus() || !strings.Contains(fixedStatus(), "11:00") {
+		t.Fatalf("after Unsubscribe the fixed chat must be told it gets the post at 11:00: %+v", api.edited)
+	}
+
+	menu.HandleStart(ctx, nil, startUpdate(group))
+	menu.HandleStart(ctx, nil, startUpdate(private))
+	if len(api.sent) != 2 || api.sent[0].Text != welcomeWith(fixedStatus()) {
+		t.Fatalf("the fixed chat must be told it gets the post at 11:00: %+v", api.sent)
+	}
+	if api.sent[1].Text != welcomeFor(0, false) {
+		t.Fatalf("another chat sees %q, want the unsubscribed state", api.sent[1].Text)
+	}
+}
+
 func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
 	subs := subscribed()
 	subs.set(10, 15)

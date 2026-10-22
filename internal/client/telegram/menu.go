@@ -72,7 +72,8 @@ type Menu struct {
 	fixedChats  []string
 }
 
-// NewMenu returns the menu. fixedChats are the chats from config.toml.
+// NewMenu returns the menu. fixedChats are the chats from config.toml, as
+// ResolveFixedChats returns them.
 func NewMenu(api API, subscribers Subscribers, fixedChats []string) *Menu {
 	return &Menu{api: api, subscribers: subscribers, fixedChats: fixedChats}
 }
@@ -164,7 +165,11 @@ func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models
 		return
 	}
 
-	m.show(ctx, t, mainScreen(unsubscribedText))
+	text := unsubscribedText
+	if m.isFixed(t.chatID) {
+		text = fixedStatus()
+	}
+	m.show(ctx, t, mainScreen(text))
 }
 
 func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -330,11 +335,26 @@ func withNote(note, text string) string {
 	return note + "\n\n" + text
 }
 
-// welcomeScreen is the menu with the chat's subscription state.
+// welcomeScreen is the menu with the chat's subscription state. A fixed chat
+// without a subscription of its own still gets the post, and is told so.
 func (m *Menu) welcomeScreen(chatID int64) screen {
 	hour, subscribed := m.subscribers.Hour(chatID)
+	if !subscribed && m.isFixed(chatID) {
+		return mainScreen(welcomeWith(fixedStatus()))
+	}
 
 	return mainScreen(welcomeFor(hour, subscribed))
+}
+
+// isFixed reports whether the chat is one of the chats from config.toml.
+func (m *Menu) isFixed(chatID int64) bool {
+	for _, chat := range m.fixedChats {
+		if id, err := strconv.ParseInt(chat, 10, 64); err == nil && id == chatID {
+			return true
+		}
+	}
+
+	return false
 }
 
 // welcomeFor is the menu text for a chat that is subscribed at hour, or is not
@@ -345,7 +365,18 @@ func welcomeFor(hour int, subscribed bool) string {
 		status = fmt.Sprintf("✅ Сейчас подписка включена: каждый день в %s (МСК).", hourLabel(hour))
 	}
 
+	return welcomeWith(status)
+}
+
+func welcomeWith(status string) string {
 	return welcomeText + "\n\n" + status + "\n\n" + chooseText
+}
+
+// fixedStatus is the state of a fixed chat without a subscription of its own:
+// it gets the post anyway, at the fixed hour.
+func fixedStatus() string {
+	return fmt.Sprintf("✅ Этот чат в списке рассылки бота: задача дня приходит сюда каждый день в %s (МСК).",
+		hourLabel(fixedChatsHour))
 }
 
 func subscribedText(hour int) string {

@@ -20,6 +20,10 @@ type fakeAPI struct {
 	commands []*bot.SetMyCommandsParams
 	descs    []*bot.SetMyDescriptionParams
 	shorts   []*bot.SetMyShortDescriptionParams
+	gotChats []*bot.GetChatParams
+	// chatIDs is the id GetChat finds for a chat name; other names are not
+	// found.
+	chatIDs map[string]int64
 	// sendErr returns an error for a given chat id, when set.
 	sendErr map[any]error
 	// editErr is returned by every EditMessageText, when set.
@@ -82,6 +86,19 @@ func (f *fakeAPI) SetMyShortDescription(_ context.Context, params *bot.SetMyShor
 
 	f.shorts = append(f.shorts, params)
 	return f.setupErr == nil, f.setupErr
+}
+
+func (f *fakeAPI) GetChat(_ context.Context, params *bot.GetChatParams) (*models.ChatFullInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.gotChats = append(f.gotChats, params)
+	name, _ := params.ChatID.(string)
+	if id, ok := f.chatIDs[name]; ok {
+		return &models.ChatFullInfo{ID: id}, nil
+	}
+
+	return nil, fmt.Errorf("%w, Bad Request: chat not found", bot.ErrorBadRequest)
 }
 
 func (f *fakeAPI) recipients() []any {
@@ -163,6 +180,27 @@ func (f *fakeSubscribers) Drop(chatID int64) (bool, error) {
 		return false, nil
 	}
 	delete(f.hours, chatID)
+
+	return true, nil
+}
+
+func (f *fakeSubscribers) Migrate(from, to int64) (bool, error) {
+	if f.failWrite != nil {
+		return false, f.failWrite
+	}
+	hour, subscribed := f.hours[from]
+	if !subscribed && !f.optedOut[from] {
+		return false, nil
+	}
+	delete(f.hours, from)
+	delete(f.optedOut, from)
+	delete(f.hours, to)
+	delete(f.optedOut, to)
+	if subscribed {
+		f.set(to, hour)
+	} else {
+		f.optedOut[to] = true
+	}
 
 	return true, nil
 }

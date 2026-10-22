@@ -24,6 +24,8 @@ chat picks another hour with `/settings`. Nobody has to press Subscribe:
 - **A chat that pressed Unsubscribe** stays out until it presses Subscribe
   again. `/start` or any other command does not subscribe it. The choice is
   kept in the subscribers file, so it survives a restart.
+- **A group that Telegram turns into a supergroup** gets a new chat id. It
+  keeps its choice under the new id: its hour, or its Unsubscribe.
 
 The menu, `/settings` and the hour choice work the same in groups as in
 private chats. Anyone in a group can use them; limiting that to group
@@ -78,8 +80,12 @@ never commit it. The token is not part of `config.toml`.
 ### config.toml
 
 - `telegram.telegramChats` — fixed recipients (chat ids or `@channel` names).
-  A chat listed by its `@name` is not subscribed on its own as well, so it
-  gets one post a day, at 11:00.
+  At start-up the bot looks up the id of each `@name` once (`getChat`). From
+  then on that chat is treated like a fixed chat given by id: if it is also a
+  subscriber, it gets one post a day, at the hour it chose. A name that
+  cannot be looked up is logged and still gets the post by name at 11:00.
+  The menu of a fixed chat without a subscription of its own says it gets
+  the post every day at 11:00.
 - `storage.subscribersPath` — where subscriptions are saved
   (default `data/subscribers.json`). The `data/` folder is ignored by git.
   The file lists the subscribed chats, their chosen hours, the chats that

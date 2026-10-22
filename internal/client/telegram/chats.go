@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -21,24 +20,34 @@ var AllowedUpdates = bot.AllowedUpdates{
 
 // BotOptions are the options that make the bot follow the chats it is in:
 // the updates it asks for, and the middleware that subscribes every chat it
-// meets for the first time. fixedChats are the chats from config.toml.
-func BotOptions(subscribers Subscribers, fixedChats []string) []bot.Option {
+// meets for the first time.
+func BotOptions(subscribers Subscribers) []bot.Option {
 	return []bot.Option{
 		bot.WithAllowedUpdates(AllowedUpdates),
-		bot.WithMiddlewares(meetChats(subscribers, fixedChats)),
+		bot.WithMiddlewares(meetChats(subscribers)),
 	}
 }
 
 // meetChats subscribes the chat of every update at the default hour when the
 // bot has not seen that chat before: a private chat that pressed Start, or a
 // group the bot was in before it learned to follow its chats. A chat that
-// pressed Unsubscribe stays out, and so does a fixed chat listed by its
-// @name, which already gets the post as a fixed chat. A failed save is logged
-// and the update goes on, so the person still gets an answer.
-func meetChats(subscribers Subscribers, fixedChats []string) bot.Middleware {
+// pressed Unsubscribe stays out. A group that Telegram has just turned into a
+// supergroup keeps its choice under its new id. A failed save is logged and
+// the update goes on, so the person still gets an answer.
+func meetChats(subscribers Subscribers) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			if chat, ok := updateChat(update, b.ID()); ok && !isFixedByName(fixedChats, chat) {
+			if msg := update.Message; msg != nil && msg.MigrateFromChatID != 0 {
+				moved, err := subscribers.Migrate(msg.MigrateFromChatID, msg.Chat.ID)
+				switch {
+				case err != nil:
+					log.Errorf("error while moving chat %d to its supergroup %d: %v", msg.MigrateFromChatID, msg.Chat.ID, err)
+				case moved:
+					log.Infof("chat %d became supergroup %d, its subscription moved", msg.MigrateFromChatID, msg.Chat.ID)
+				}
+			}
+
+			if chat, ok := updateChat(update, b.ID()); ok {
 				met, err := subscribers.Meet(chat.ID)
 				switch {
 				case err != nil:
@@ -77,23 +86,10 @@ func updateChat(update *models.Update, botID int64) (models.Chat, bool) {
 	return models.Chat{}, false
 }
 
-// isFixedByName reports whether chat is listed in fixedChats by its @name.
-// Telegram does not care about the case of a name.
-func isFixedByName(fixedChats []string, chat models.Chat) bool {
-	for _, fixed := range fixedChats {
-		if strings.EqualFold(fixed, "@"+chat.Username) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // HandleMyChatMember follows the bot's own membership of a chat. When the bot
 // becomes a member or an administrator of a group, supergroup or channel, the
 // chat is subscribed at the default hour, also if it unsubscribed before:
-// adding the bot again is a new decision. A fixed chat listed by its @name is
-// left out, as it already gets the post. When the bot is removed, kicked, or
+// adding the bot again is a new decision. When the bot is removed, kicked, or
 // a user blocks it in a private chat, the chat is unsubscribed.
 //
 // Changes that keep the bot in the chat (made an administrator, restricted)
@@ -108,7 +104,7 @@ func (m *Menu) HandleMyChatMember(_ context.Context, _ *bot.Bot, update *models.
 	was, now := isMember(change.OldChatMember), isMember(change.NewChatMember)
 
 	switch {
-	case now && !was && change.Chat.Type != models.ChatTypePrivate && !isFixedByName(m.fixedChats, change.Chat):
+	case now && !was && change.Chat.Type != models.ChatTypePrivate:
 		if _, err := m.subscribers.Add(chatID); err != nil {
 			log.Errorf("error while subscribing chat %d that added the bot: %v", chatID, err)
 			return

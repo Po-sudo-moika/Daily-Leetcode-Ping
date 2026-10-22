@@ -16,7 +16,7 @@ import (
 func newRegisteredBot(t *testing.T, subs Subscribers, fixedChats ...string) (*bot.Bot, *fakeAPI) {
 	t.Helper()
 
-	options := append(BotOptions(subs, fixedChats), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
+	options := append(BotOptions(subs), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	b, err := bot.New("123456:fake-token-for-tests", options...)
 	if err != nil {
 		t.Fatal(err)
