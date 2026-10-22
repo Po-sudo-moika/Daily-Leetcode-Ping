@@ -78,6 +78,8 @@ never commit it. The token is not part of `config.toml`.
 ### config.toml
 
 - `telegram.telegramChats` — fixed recipients (chat ids or `@channel` names).
+  A chat listed by its `@name` is not subscribed on its own as well, so it
+  gets one post a day, at 11:00.
 - `storage.subscribersPath` — where subscriptions are saved
   (default `data/subscribers.json`). The `data/` folder is ignored by git.
   The file lists the subscribed chats, their chosen hours, the chats that

@@ -95,10 +95,53 @@ func TestMyChatMember_RestrictedBotChangesNothing(t *testing.T) {
 	subs := subscribed(group)
 	b, _ := newRegisteredBot(t, subs)
 
-	b.ProcessUpdate(context.Background(), myChatMemberUpdate(group, models.ChatTypeGroup, models.ChatMemberTypeMember, models.ChatMemberTypeRestricted))
+	b.ProcessUpdate(context.Background(), restricted(myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeMember, models.ChatMemberTypeRestricted), false, true))
 
 	if !slices.Equal(subs.chats(), []int64{group}) {
 		t.Fatalf("subscribers %v, want the group kept", subs.chats())
+	}
+}
+
+// restricted fills in, for each restricted side of the change, whether the
+// restricted bot is still in the chat. A side that is not restricted is left
+// as it is.
+func restricted(update *models.Update, oldIsMember, newIsMember bool) *models.Update {
+	change := update.MyChatMember
+	if change.OldChatMember.Type == models.ChatMemberTypeRestricted {
+		change.OldChatMember.Restricted = &models.ChatMemberRestricted{IsMember: oldIsMember}
+	}
+	if change.NewChatMember.Type == models.ChatMemberTypeRestricted {
+		change.NewChatMember.Restricted = &models.ChatMemberRestricted{IsMember: newIsMember}
+	}
+
+	return update
+}
+
+// A restricted bot that is still in the chat is a member: lifting the
+// restriction is not being added, so a group that pressed Unsubscribe must
+// stay out.
+func TestMyChatMember_LiftedRestrictionDoesNotUndoUnsubscribe(t *testing.T) {
+	subs := subscribed(group)
+	b, _ := newRegisteredBot(t, subs)
+	ctx := context.Background()
+
+	b.ProcessUpdate(ctx, callbackUpdate(group, callbackUnsubscribe))
+	b.ProcessUpdate(ctx, restricted(myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeMember, models.ChatMemberTypeRestricted), false, true))
+	b.ProcessUpdate(ctx, restricted(myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeRestricted, models.ChatMemberTypeMember), true, false))
+
+	if len(subs.chats()) != 0 {
+		t.Fatalf("subscribers %v, want none", subs.chats())
+	}
+}
+
+func TestMyChatMember_RemovedWhileRestrictedUnsubscribes(t *testing.T) {
+	subs := subscribed(group)
+	b, _ := newRegisteredBot(t, subs)
+
+	b.ProcessUpdate(context.Background(), restricted(myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeRestricted, models.ChatMemberTypeRestricted), true, false))
+
+	if len(subs.chats()) != 0 {
+		t.Fatalf("subscribers %v, want none after the bot was removed", subs.chats())
 	}
 }
 
@@ -162,6 +205,7 @@ func TestFirstContact_AnyUpdateFromAnUnseenChatSubscribesIt(t *testing.T) {
 		"plain message":           {Message: &models.Message{Chat: models.Chat{ID: group}, Text: "hello"}},
 		"button on an old menu":   callbackUpdate(group, callbackAbout),
 		"button, message too old": oldMenuUpdate(t, group, callbackAbout),
+		"another member left":     {Message: &models.Message{Chat: models.Chat{ID: group}, LeftChatMember: &models.User{ID: 42}}},
 	}
 
 	for name, update := range updates {
@@ -175,6 +219,81 @@ func TestFirstContact_AnyUpdateFromAnUnseenChatSubscribesIt(t *testing.T) {
 				t.Fatalf("hour=%d subscribed=%v, want subscribed at %d", hour, ok, subscribers.DefaultHour)
 			}
 		})
+	}
+}
+
+// Telegram also sends a service message when the bot is removed from a
+// group, in no fixed order with my_chat_member. It must not subscribe the
+// group again.
+func TestFirstContact_BotRemovedMessageDoesNotSubscribeTheGroupAgain(t *testing.T) {
+	subs := subscribed()
+	b, _ := newRegisteredBot(t, subs)
+	ctx := context.Background()
+
+	b.ProcessUpdate(ctx, myChatMemberUpdate(group, models.ChatTypeGroup, models.ChatMemberTypeLeft, models.ChatMemberTypeMember))
+	b.ProcessUpdate(ctx, myChatMemberUpdate(group, models.ChatTypeGroup, models.ChatMemberTypeMember, models.ChatMemberTypeLeft))
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		Chat:           models.Chat{ID: group, Type: models.ChatTypeGroup},
+		LeftChatMember: &models.User{ID: b.ID(), IsBot: true},
+	}})
+
+	if len(subs.chats()) != 0 {
+		t.Fatalf("subscribers %v, want none after the bot was removed", subs.chats())
+	}
+}
+
+// When a group becomes a supergroup, Telegram says so in the old group, whose
+// id is dead from then on.
+func TestFirstContact_OldIdOfAnUpgradedGroupIsNotSubscribed(t *testing.T) {
+	subs := subscribed()
+	b, _ := newRegisteredBot(t, subs)
+
+	b.ProcessUpdate(context.Background(), &models.Update{Message: &models.Message{
+		Chat:            models.Chat{ID: group, Type: models.ChatTypeGroup},
+		MigrateToChatID: -1009,
+	}})
+
+	if len(subs.chats()) != 0 {
+		t.Fatalf("subscribers %v, want none", subs.chats())
+	}
+}
+
+// A fixed chat listed by its @name already gets the post as a fixed chat. If
+// meeting it subscribed its id too, it would get the post twice a day.
+func TestFirstContact_FixedChatListedByNameGetsOnePostADay(t *testing.T) {
+	const numeric = int64(-1002)
+	fixed := []string{"@MyGroup", "-1002"}
+	subs := subscribed()
+	b, _ := newRegisteredBot(t, subs, fixed...)
+	ctx := context.Background()
+
+	inGroup := func(chatID int64, username string, update *models.Update) *models.Update {
+		chat := models.Chat{ID: chatID, Type: models.ChatTypeSupergroup, Username: username}
+		if update.Message != nil {
+			update.Message.Chat = chat
+		} else {
+			update.MyChatMember.Chat = chat
+		}
+		return update
+	}
+	b.ProcessUpdate(ctx, inGroup(group, "mygroup", commandUpdate(group, "/settings")))
+	b.ProcessUpdate(ctx, inGroup(group, "mygroup", myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeMember, models.ChatMemberTypeLeft)))
+	b.ProcessUpdate(ctx, inGroup(group, "mygroup", myChatMemberUpdate(group, models.ChatTypeSupergroup, models.ChatMemberTypeLeft, models.ChatMemberTypeMember)))
+	b.ProcessUpdate(ctx, inGroup(numeric, "", commandUpdate(numeric, "/start")))
+
+	if want := []int64{numeric}; !slices.Equal(subs.chats(), want) {
+		t.Fatalf("subscribers %v, want %v: only the fixed chat listed by its id is met", subs.chats(), want)
+	}
+
+	api := &fakeAPI{}
+	c, _ := New(api, fixed, subs)
+	for hour := 11; hour <= 12; hour++ {
+		if err := c.SendDue(ctx, at(11, hour, 0), question); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := []any{"@MyGroup", numeric}; !slices.Equal(api.recipients(), want) {
+		t.Fatalf("the posts of the day went to %v, want %v", api.recipients(), want)
 	}
 }
 

@@ -69,10 +69,12 @@ type target struct {
 type Menu struct {
 	api         API
 	subscribers Subscribers
+	fixedChats  []string
 }
 
-func NewMenu(api API, subscribers Subscribers) *Menu {
-	return &Menu{api: api, subscribers: subscribers}
+// NewMenu returns the menu. fixedChats are the chats from config.toml.
+func NewMenu(api API, subscribers Subscribers, fixedChats []string) *Menu {
+	return &Menu{api: api, subscribers: subscribers, fixedChats: fixedChats}
 }
 
 // Register wires the menu handlers into the bot.

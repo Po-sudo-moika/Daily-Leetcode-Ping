@@ -132,10 +132,12 @@ func (c *client) deliveryHour(chat string) (int, bool) {
 
 // chatUnreachable reports an error from Telegram that says the chat will not
 // get a post any more: the user blocked the bot, the bot was kicked from the
-// group or channel, or the chat does not exist. Any other error, such as a
-// timeout, may pass, so it only fails this round.
+// group or channel, the chat does not exist, or the group moved to a new id
+// when it became a supergroup. Any other error, such as a timeout, may pass,
+// so it only fails this round.
 func chatUnreachable(err error) bool {
-	if errors.Is(err, bot.ErrorForbidden) {
+	var migrated *bot.MigrateError
+	if errors.Is(err, bot.ErrorForbidden) || errors.As(err, &migrated) {
 		return true
 	}
 

@@ -17,7 +17,7 @@ import (
 
 func newMenu(subs *fakeSubscribers) (*Menu, *fakeAPI) {
 	api := &fakeAPI{}
-	return NewMenu(api, subs), api
+	return NewMenu(api, subs, nil), api
 }
 
 func buttons(t *testing.T, markup any) []models.InlineKeyboardButton {

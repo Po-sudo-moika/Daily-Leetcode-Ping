@@ -39,12 +39,12 @@ func main() {
 		log.Fatal("Ошибка загрузки таймзоны:", err)
 	}
 
-	tgBot, err := bot.New(token, telegram.BotOptions(store)...)
+	tgBot, err := bot.New(token, telegram.BotOptions(store, conf.Telegram.TelegramChats)...)
 	if err != nil {
 		log.Fatalf("error while creating bot: %v", err)
 	}
 
-	menu := telegram.NewMenu(tgBot, store)
+	menu := telegram.NewMenu(tgBot, store, conf.Telegram.TelegramChats)
 	menu.Register(tgBot)
 
 	tgClient, err := telegram.New(tgBot, conf.Telegram.TelegramChats, store)

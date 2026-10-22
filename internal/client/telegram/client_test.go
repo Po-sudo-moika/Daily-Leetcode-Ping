@@ -451,6 +451,10 @@ func TestSendDue_DropsChatsTelegramCannotReachAnyMore(t *testing.T) {
 		"chat deleted": fmt.Errorf("%w, Bad Request: chat not found", bot.ErrorBadRequest),
 		"chat missing": fmt.Errorf("%w, Not Found: chat not found", bot.ErrorNotFound),
 		"mixed case":   fmt.Errorf("%w, Bad Request: Chat Not Found", bot.ErrorBadRequest),
+		"group upgraded": &bot.MigrateError{
+			Message:         fmt.Sprintf("%s: group chat was upgraded to a supergroup chat", bot.ErrorBadRequest),
+			MigrateToChatID: -1009,
+		},
 	}
 
 	for name, sendErr := range gone {
