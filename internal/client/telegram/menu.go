@@ -26,7 +26,11 @@ const (
 	RepositoryURL = "https://github.com/Po-sudo-moika/Daily-Leetcode-Ping"
 
 	welcomeText = "👋 Привет! Я присылаю задачу дня с LeetCode каждый день, по умолчанию в 11:00 по Москве. " +
-		"Время можно выбрать в настройках.\n\nВыбери действие:"
+		"Время можно выбрать в настройках."
+
+	chooseText = "Выбери действие:"
+
+	notSubscribedStatus = "🛑 Сейчас подписка отключена."
 
 	unsubscribedText = "🛑 Подписка отключена. Чтобы вернуться, нажми «Подписаться»."
 
@@ -41,8 +45,8 @@ const (
 	// What people see in the bot's profile before they press Start. Telegram
 	// limits: description 512 characters, short description 120.
 	botDescription = "Присылаю задачу дня с LeetCode каждый день в удобный час (по умолчанию в 11:00 по Москве): " +
-		"название, сложность и ссылку.\n\nНажми «Начать» — откроется меню: там можно подписаться, " +
-		"выбрать час рассылки и отписаться."
+		"название, сложность и ссылку.\n\nНажми «Начать» — подписка включится сама, откроется меню: " +
+		"там можно выбрать час рассылки и отписаться. Меня можно добавить и в группу или канал."
 	botShortDescription = "Задача дня с LeetCode каждый день в удобный час по Москве"
 
 	hoursPerRow = 4
@@ -73,6 +77,7 @@ func NewMenu(api API, subscribers Subscribers) *Menu {
 
 // Register wires the menu handlers into the bot.
 func (m *Menu) Register(b *bot.Bot) {
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return update.MyChatMember != nil }, m.HandleMyChatMember)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommandStartOnly, m.HandleStart)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "settings", bot.MatchTypeCommandStartOnly, m.HandleSettingsCommand)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackSubscribe, bot.MatchTypeExact, m.HandleSubscribe)
@@ -115,7 +120,8 @@ func (m *Menu) HandleStart(ctx context.Context, _ *bot.Bot, update *models.Updat
 		return
 	}
 
-	m.send(ctx, update.Message.Chat.ID, mainScreen(welcomeText))
+	chatID := update.Message.Chat.ID
+	m.send(ctx, chatID, m.welcomeScreen(chatID))
 }
 
 // HandleSettingsCommand opens the settings screen in a new message.
@@ -184,7 +190,7 @@ func (m *Menu) HandleBack(ctx context.Context, _ *bot.Bot, update *models.Update
 		return
 	}
 
-	m.show(ctx, t, mainScreen(welcomeText))
+	m.show(ctx, t, m.welcomeScreen(t.chatID))
 }
 
 // HandleHour saves the delivery hour of the pressed button and shows the
@@ -320,6 +326,24 @@ func withNote(note, text string) string {
 	}
 
 	return note + "\n\n" + text
+}
+
+// welcomeScreen is the menu with the chat's subscription state.
+func (m *Menu) welcomeScreen(chatID int64) screen {
+	hour, subscribed := m.subscribers.Hour(chatID)
+
+	return mainScreen(welcomeFor(hour, subscribed))
+}
+
+// welcomeFor is the menu text for a chat that is subscribed at hour, or is not
+// subscribed.
+func welcomeFor(hour int, subscribed bool) string {
+	status := notSubscribedStatus
+	if subscribed {
+		status = fmt.Sprintf("✅ Сейчас подписка включена: каждый день в %s (МСК).", hourLabel(hour))
+	}
+
+	return welcomeText + "\n\n" + status + "\n\n" + chooseText
 }
 
 func subscribedText(hour int) string {

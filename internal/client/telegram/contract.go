@@ -37,8 +37,18 @@ type API interface {
 
 // Subscribers is the subscription storage.
 type Subscribers interface {
+	// Add subscribes a chat because someone asked for it. It also takes the
+	// chat out of the ones that unsubscribed.
 	Add(chatID int64) (bool, error)
+	// Meet subscribes a chat seen for the first time. A subscriber and a
+	// chat that unsubscribed are left as they are.
+	Meet(chatID int64) (bool, error)
+	// Remove unsubscribes a chat because someone chose to; Meet does not
+	// subscribe it again.
 	Remove(chatID int64) (bool, error)
+	// Drop unsubscribes a chat that cannot get the post any more. It is not
+	// a choice: Meet subscribes the chat again when it comes back.
+	Drop(chatID int64) (bool, error)
 	// Hour returns the Moscow delivery hour; false when not subscribed.
 	Hour(chatID int64) (int, bool)
 	SetHour(chatID int64, hour int) error

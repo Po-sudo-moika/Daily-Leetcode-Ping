@@ -31,9 +31,9 @@ var ErrInvalidHour = errors.New("hour out of range")
 // ErrNotSubscribed means the chat has no subscription.
 var ErrNotSubscribed = errors.New("chat is not subscribed")
 
-// Store keeps the subscribers, their delivery hour and the day each chat last
-// got the post in a small JSON file, so that all of it survives a restart. It
-// is safe for concurrent use.
+// Store keeps the subscribers, their delivery hour, the chats that chose to
+// unsubscribe and the day each chat last got the post in a small JSON file, so
+// that all of it survives a restart. It is safe for concurrent use.
 //
 // A day is a Moscow date in time.DateOnly form, such as "2026-10-11". A chat
 // in the delivery records is a subscriber's id or a chat from config.toml.
@@ -43,6 +43,10 @@ type Store struct {
 	mu sync.Mutex
 	// chats maps a subscribed chat id to its Moscow delivery hour.
 	chats map[int64]int
+	// optedOut holds the chats that pressed Unsubscribe. Only a deliberate
+	// subscribe (Add) takes a chat out of it; meeting the chat again (Meet)
+	// does not.
+	optedOut map[int64]bool
 	// delivered maps a chat to the last day it got the post.
 	delivered map[string]string
 }
@@ -50,17 +54,19 @@ type Store struct {
 // fileData is the file format. Chats is the original format and stays a plain
 // list of ids, so a file written before delivery hours existed loads as is and
 // an older build can still read a newer file. Hours lists only the chats that
-// chose something other than DefaultHour, keyed by chat id. Delivered maps a
-// chat to the last day it got the post.
+// chose something other than DefaultHour, keyed by chat id. OptedOut lists the
+// chats that pressed Unsubscribe. Delivered maps a chat to the last day it got
+// the post.
 type fileData struct {
 	Chats     []int64           `json:"chats"`
 	Hours     map[string]int    `json:"hours,omitempty"`
+	OptedOut  []int64           `json:"optedOut,omitempty"`
 	Delivered map[string]string `json:"delivered,omitempty"`
 }
 
 // Open loads the store from path. A missing file is an empty store.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, chats: make(map[int64]int), delivered: make(map[string]string)}
+	s := &Store{path: path, chats: make(map[int64]int), optedOut: make(map[int64]bool), delivered: make(map[string]string)}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -91,6 +97,13 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
+	for _, chatID := range data.OptedOut {
+		// A chat that is subscribed in the same file is a subscriber.
+		if _, ok := s.chats[chatID]; !ok {
+			s.optedOut[chatID] = true
+		}
+	}
+
 	for chat, day := range data.Delivered {
 		s.delivered[chat] = day
 	}
@@ -102,7 +115,9 @@ func validHour(hour int) bool {
 	return hour >= MinHour && hour <= MaxHour
 }
 
-// Add subscribes a chat. It reports whether the chat was new.
+// Add subscribes a chat, because someone asked for it: the Subscribe button,
+// or the bot being added to a group. It takes the chat out of the unsubscribed
+// ones. It reports whether the chat was new.
 func (s *Store) Add(chatID int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -111,17 +126,75 @@ func (s *Store) Add(chatID int64) (bool, error) {
 		return false, nil
 	}
 
-	s.chats[chatID] = DefaultHour
-	if err := s.save(); err != nil {
-		delete(s.chats, chatID)
+	return true, s.subscribe(chatID)
+}
+
+// Meet subscribes a chat the bot meets for the first time: it has no
+// subscription and never pressed Unsubscribe. It reports whether it subscribed
+// the chat. A subscriber and a chat that unsubscribed are left as they are.
+func (s *Store) Meet(chatID int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.chats[chatID]; ok || s.optedOut[chatID] {
+		return false, nil
+	}
+
+	if err := s.subscribe(chatID); err != nil {
 		return false, err
 	}
 
 	return true, nil
 }
 
-// Remove unsubscribes a chat. It reports whether the chat was subscribed.
+// subscribe adds the chat at DefaultHour and forgets that it unsubscribed. A
+// failed save leaves the store as it was. The caller holds s.mu.
+func (s *Store) subscribe(chatID int64) error {
+	wasOptedOut := s.optedOut[chatID]
+	s.chats[chatID] = DefaultHour
+	delete(s.optedOut, chatID)
+
+	if err := s.save(); err != nil {
+		delete(s.chats, chatID)
+		if wasOptedOut {
+			s.optedOut[chatID] = true
+		}
+		return err
+	}
+
+	return nil
+}
+
+// Remove unsubscribes a chat because someone chose to, and remembers the
+// choice: Meet does not subscribe the chat again, also after a restart. It
+// reports whether the chat was subscribed.
 func (s *Store) Remove(chatID int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	hour, wasSubscribed := s.chats[chatID]
+	if !wasSubscribed && s.optedOut[chatID] {
+		return false, nil
+	}
+
+	delete(s.chats, chatID)
+	s.optedOut[chatID] = true
+	if err := s.save(); err != nil {
+		delete(s.optedOut, chatID)
+		if wasSubscribed {
+			s.chats[chatID] = hour
+		}
+		return false, err
+	}
+
+	return wasSubscribed, nil
+}
+
+// Drop unsubscribes a chat that cannot get the post any more: the bot was
+// blocked or removed, or the chat is gone. It does not count as a choice: a
+// chat that comes back is met again and subscribed, unless it had pressed
+// Unsubscribe before. It reports whether the chat was subscribed.
+func (s *Store) Drop(chatID int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -232,6 +305,10 @@ func (s *Store) sorted() []int64 {
 // half-written store behind. The caller holds s.mu.
 func (s *Store) save() error {
 	data := fileData{Chats: s.sorted(), Delivered: s.delivered}
+	for chatID := range s.optedOut {
+		data.OptedOut = append(data.OptedOut, chatID)
+	}
+	slices.Sort(data.OptedOut)
 	for chatID, hour := range s.chats {
 		if hour == DefaultHour {
 			continue

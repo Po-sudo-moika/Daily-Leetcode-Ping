@@ -97,6 +97,7 @@ func (f *fakeAPI) recipients() []any {
 // chat got the post, like the real store.
 type fakeSubscribers struct {
 	hours     map[int64]int
+	optedOut  map[int64]bool
 	delivered map[string]string
 	failWrite error
 }
@@ -137,6 +138,31 @@ func (f *fakeSubscribers) Add(chatID int64) (bool, error) {
 		return false, nil
 	}
 	f.set(chatID, subscribers.DefaultHour)
+	delete(f.optedOut, chatID)
+
+	return true, nil
+}
+
+func (f *fakeSubscribers) Meet(chatID int64) (bool, error) {
+	if f.failWrite != nil {
+		return false, f.failWrite
+	}
+	if _, ok := f.hours[chatID]; ok || f.optedOut[chatID] {
+		return false, nil
+	}
+	f.set(chatID, subscribers.DefaultHour)
+
+	return true, nil
+}
+
+func (f *fakeSubscribers) Drop(chatID int64) (bool, error) {
+	if f.failWrite != nil {
+		return false, f.failWrite
+	}
+	if _, ok := f.hours[chatID]; !ok {
+		return false, nil
+	}
+	delete(f.hours, chatID)
 
 	return true, nil
 }
@@ -145,6 +171,10 @@ func (f *fakeSubscribers) Remove(chatID int64) (bool, error) {
 	if f.failWrite != nil {
 		return false, f.failWrite
 	}
+	if f.optedOut == nil {
+		f.optedOut = map[int64]bool{}
+	}
+	f.optedOut[chatID] = true
 	if _, ok := f.hours[chatID]; !ok {
 		return false, nil
 	}
@@ -216,3 +246,12 @@ func startUpdate(chatID int64) *models.Update {
 }
 
 var errBlocked = fmt.Errorf("%w, Forbidden: bot was blocked by the user", bot.ErrorForbidden)
+
+// myChatMemberUpdate reports the bot's own membership of a chat changing.
+func myChatMemberUpdate(chatID int64, chatType models.ChatType, from, to models.ChatMemberType) *models.Update {
+	return &models.Update{MyChatMember: &models.ChatMemberUpdated{
+		Chat:          models.Chat{ID: chatID, Type: chatType},
+		OldChatMember: models.ChatMember{Type: from},
+		NewChatMember: models.ChatMember{Type: to},
+	}}
+}

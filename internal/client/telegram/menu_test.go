@@ -98,7 +98,7 @@ func TestHandleStart_ShowsWelcomeAndMenu(t *testing.T) {
 	if msg.ChatID != int64(10) {
 		t.Fatalf("sent to %v, want 10", msg.ChatID)
 	}
-	if msg.Text != welcomeText {
+	if msg.Text != welcomeFor(0, false) {
 		t.Fatalf("text %q, want welcome text", msg.Text)
 	}
 
@@ -254,7 +254,7 @@ func TestHandleBack_ReturnsToMenu(t *testing.T) {
 	menu.HandleBack(context.Background(), nil, callbackUpdate(10, callbackMenu))
 
 	edit := onlyEdit(t, api)
-	if edit.Text != welcomeText {
+	if edit.Text != welcomeFor(0, false) {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 	if got := callbacks(t, edit.ReplyMarkup); !slices.Contains(got, callbackSubscribe) {
@@ -631,5 +631,27 @@ func TestSetup_ReportsErrorsButTriesEverything(t *testing.T) {
 	}
 	if len(api.commands) != 1 || len(api.descs) != 1 || len(api.shorts) != 1 {
 		t.Fatalf("one failure must not skip the other calls: %d %d %d", len(api.commands), len(api.descs), len(api.shorts))
+	}
+}
+
+func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
+	subs := subscribed()
+	subs.set(10, 15)
+	menu, api := newMenu(subs)
+
+	menu.HandleStart(context.Background(), nil, startUpdate(10))
+	menu.HandleStart(context.Background(), nil, startUpdate(20))
+
+	if len(api.sent) != 2 {
+		t.Fatalf("sent %d messages, want 2", len(api.sent))
+	}
+	if want := welcomeFor(15, true); api.sent[0].Text != want || !strings.Contains(want, "15:00") {
+		t.Fatalf("subscriber sees %q, want the hour 15:00 in %q", api.sent[0].Text, want)
+	}
+	if want := welcomeFor(0, false); api.sent[1].Text != want || strings.Contains(want, "00:00") {
+		t.Fatalf("non-subscriber sees %q, want %q", api.sent[1].Text, want)
+	}
+	if welcomeFor(15, true) == welcomeFor(0, false) {
+		t.Fatal("the two states must read differently")
 	}
 }
