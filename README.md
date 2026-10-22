@@ -22,8 +22,9 @@ chat picks another hour with `/settings`. Nobody has to press Subscribe:
   command or presses a button there (for example `/start`), or through
   `telegram.telegramChats` in `config.toml`.
 - **A chat that pressed Unsubscribe** stays out until it presses Subscribe
-  again. `/start` or any other command does not subscribe it. The choice is
-  kept in the subscribers file, so it survives a restart.
+  again, or the bot is removed and added again. `/start` or any other
+  command does not subscribe it. The choice is kept in the subscribers file,
+  so it survives a restart.
 - **A group that Telegram turns into a supergroup** gets a new chat id. It
   keeps its choice under the new id: its hour, or its Unsubscribe.
 
@@ -59,8 +60,8 @@ or the hour it chose if it is also a subscriber), the start-up post counts as
 its post for the day, so the next full hour does not repeat it.
 If Telegram says a user blocked the bot, the bot was kicked from a group or
 channel, or the chat no longer exists, that chat is unsubscribed. It is
-subscribed again if it comes back (a new `/start`, or the bot added again),
-unless it had pressed Unsubscribe.
+subscribed again when the bot is added again, or on a new `/start` unless it
+had pressed Unsubscribe.
 
 ## Configuration
 
