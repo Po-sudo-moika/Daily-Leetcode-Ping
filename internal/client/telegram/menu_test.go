@@ -17,7 +17,7 @@ import (
 
 func newMenu(subs *fakeSubscribers) (*Menu, *fakeAPI) {
 	api := &fakeAPI{}
-	return NewMenu(api, subs), api
+	return NewMenu(api, subs, nil), api
 }
 
 func buttons(t *testing.T, markup any) []models.InlineKeyboardButton {
@@ -98,7 +98,7 @@ func TestHandleStart_ShowsWelcomeAndMenu(t *testing.T) {
 	if msg.ChatID != int64(10) {
 		t.Fatalf("sent to %v, want 10", msg.ChatID)
 	}
-	if msg.Text != welcomeText {
+	if msg.Text != welcomeFor(0, false) {
 		t.Fatalf("text %q, want welcome text", msg.Text)
 	}
 
@@ -254,7 +254,7 @@ func TestHandleBack_ReturnsToMenu(t *testing.T) {
 	menu.HandleBack(context.Background(), nil, callbackUpdate(10, callbackMenu))
 
 	edit := onlyEdit(t, api)
-	if edit.Text != welcomeText {
+	if edit.Text != welcomeFor(0, false) {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 	if got := callbacks(t, edit.ReplyMarkup); !slices.Contains(got, callbackSubscribe) {
@@ -631,5 +631,49 @@ func TestSetup_ReportsErrorsButTriesEverything(t *testing.T) {
 	}
 	if len(api.commands) != 1 || len(api.descs) != 1 || len(api.shorts) != 1 {
 		t.Fatalf("one failure must not skip the other calls: %d %d %d", len(api.commands), len(api.descs), len(api.shorts))
+	}
+}
+
+// A fixed chat gets the post even without a subscription of its own, so the
+// menu must not tell it the post is off.
+func TestWelcome_FixedChatWithoutSubscriptionIsToldItGetsThePost(t *testing.T) {
+	api := &fakeAPI{}
+	menu := NewMenu(api, subscribed(group), []string{"-1001", "@gone"})
+	ctx := context.Background()
+
+	menu.HandleUnsubscribe(ctx, nil, callbackUpdate(group, callbackUnsubscribe))
+	if len(api.edited) != 1 || api.edited[0].Text != fixedStatus() || !strings.Contains(fixedStatus(), "11:00") {
+		t.Fatalf("after Unsubscribe the fixed chat must be told it gets the post at 11:00: %+v", api.edited)
+	}
+
+	menu.HandleStart(ctx, nil, startUpdate(group))
+	menu.HandleStart(ctx, nil, startUpdate(private))
+	if len(api.sent) != 2 || api.sent[0].Text != welcomeWith(fixedStatus()) {
+		t.Fatalf("the fixed chat must be told it gets the post at 11:00: %+v", api.sent)
+	}
+	if api.sent[1].Text != welcomeFor(0, false) {
+		t.Fatalf("another chat sees %q, want the unsubscribed state", api.sent[1].Text)
+	}
+}
+
+func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
+	subs := subscribed()
+	subs.set(10, 15)
+	menu, api := newMenu(subs)
+
+	menu.HandleStart(context.Background(), nil, startUpdate(10))
+	menu.HandleStart(context.Background(), nil, startUpdate(20))
+
+	if len(api.sent) != 2 {
+		t.Fatalf("sent %d messages, want 2", len(api.sent))
+	}
+	if want := welcomeFor(15, true); api.sent[0].Text != want || !strings.Contains(want, "15:00") {
+		t.Fatalf("subscriber sees %q, want the hour 15:00 in %q", api.sent[0].Text, want)
+	}
+	if want := welcomeFor(0, false); api.sent[1].Text != want || strings.Contains(want, "00:00") {
+		t.Fatalf("non-subscriber sees %q, want %q", api.sent[1].Text, want)
+	}
+	if welcomeFor(15, true) == welcomeFor(0, false) {
+		t.Fatal("the two states must read differently")
 	}
 }

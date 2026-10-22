@@ -545,3 +545,289 @@ func TestOldFormats_LoadWithNothingDelivered(t *testing.T) {
 		})
 	}
 }
+
+// reopen loads the store again from its file, like a restart.
+func reopen(t *testing.T, path string) *Store {
+	t.Helper()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+
+	return s
+}
+
+func TestMeet_SubscribesAChatSeenForTheFirstTime(t *testing.T) {
+	s, path := openTemp(t)
+
+	met, err := s.Meet(42)
+	if err != nil || !met {
+		t.Fatalf("first meet: met=%v err=%v", met, err)
+	}
+	if hour, ok := s.Hour(42); !ok || hour != DefaultHour {
+		t.Fatalf("hour=%d ok=%v, want subscribed at %d", hour, ok, DefaultHour)
+	}
+
+	if _, ok := reopen(t, path).Hour(42); !ok {
+		t.Fatal("the subscription must survive a restart")
+	}
+}
+
+func TestMeet_KeepsTheHourOfASubscriber(t *testing.T) {
+	s, _ := openTemp(t)
+	if _, err := s.Add(42); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetHour(42, 9); err != nil {
+		t.Fatal(err)
+	}
+
+	met, err := s.Meet(42)
+	if err != nil || met {
+		t.Fatalf("meet of a subscriber: met=%v err=%v", met, err)
+	}
+	if hour, _ := s.Hour(42); hour != 9 {
+		t.Fatalf("hour %d, want 9", hour)
+	}
+}
+
+func TestMeet_RespectsUnsubscribe_AlsoAfterRestart(t *testing.T) {
+	s, path := openTemp(t)
+	if _, err := s.Meet(42); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := s.Remove(42); err != nil || !removed {
+		t.Fatalf("remove: removed=%v err=%v", removed, err)
+	}
+
+	for name, store := range map[string]*Store{"same run": s, "after restart": reopen(t, path)} {
+		met, err := store.Meet(42)
+		if err != nil || met {
+			t.Fatalf("%s: meet: met=%v err=%v", name, met, err)
+		}
+		if _, ok := store.Hour(42); ok {
+			t.Fatalf("%s: an unsubscribed chat must stay out", name)
+		}
+	}
+}
+
+func TestRemove_OfAnUnknownChatStillRecordsTheChoice(t *testing.T) {
+	s, path := openTemp(t)
+
+	if removed, err := s.Remove(42); err != nil || removed {
+		t.Fatalf("remove: removed=%v err=%v", removed, err)
+	}
+	if met, err := reopen(t, path).Meet(42); err != nil || met {
+		t.Fatalf("meet after restart: met=%v err=%v", met, err)
+	}
+}
+
+func TestAdd_SubscribesAgainAfterUnsubscribe(t *testing.T) {
+	s, path := openTemp(t)
+	if _, err := s.Remove(42); err != nil {
+		t.Fatal(err)
+	}
+
+	if added, err := s.Add(42); err != nil || !added {
+		t.Fatalf("add: added=%v err=%v", added, err)
+	}
+
+	restarted := reopen(t, path)
+	if _, ok := restarted.Hour(42); !ok {
+		t.Fatal("subscribed again, it must stay subscribed after a restart")
+	}
+	// Unsubscribing and subscribing again leaves no stale opt-out behind.
+	if _, err := restarted.Drop(42); err != nil {
+		t.Fatal(err)
+	}
+	if met, err := restarted.Meet(42); err != nil || !met {
+		t.Fatalf("meet after drop: met=%v err=%v", met, err)
+	}
+}
+
+func TestDrop_UnsubscribesButLetsTheChatComeBack(t *testing.T) {
+	s, path := openTemp(t)
+	if _, err := s.Meet(42); err != nil {
+		t.Fatal(err)
+	}
+
+	if dropped, err := s.Drop(42); err != nil || !dropped {
+		t.Fatalf("drop: dropped=%v err=%v", dropped, err)
+	}
+	if dropped, err := s.Drop(42); err != nil || dropped {
+		t.Fatalf("second drop: dropped=%v err=%v", dropped, err)
+	}
+	if _, ok := reopen(t, path).Hour(42); ok {
+		t.Fatal("a dropped chat must stay out after a restart")
+	}
+
+	// It never pressed Unsubscribe, so a new contact subscribes it again.
+	if met, err := s.Meet(42); err != nil || !met {
+		t.Fatalf("meet after drop: met=%v err=%v", met, err)
+	}
+}
+
+func TestDrop_KeepsTheChoiceOfAChatThatUnsubscribed(t *testing.T) {
+	s, _ := openTemp(t)
+	if _, err := s.Remove(42); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Drop(42); err != nil {
+		t.Fatal(err)
+	}
+	if met, err := s.Meet(42); err != nil || met {
+		t.Fatalf("meet: met=%v err=%v; the unsubscribe choice must survive a drop", met, err)
+	}
+}
+
+func TestMeetRemoveDrop_RollBackWhenSaveFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sub", "subscribers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Meet(7); err == nil {
+		t.Fatal("meet: want a save error")
+	}
+	if _, ok := s.Hour(7); ok {
+		t.Fatal("a failed meet must not stay in memory")
+	}
+
+	if _, err := s.Remove(8); err == nil {
+		t.Fatal("remove: want a save error")
+	}
+}
+
+func TestMigrate_UpgradedGroupKeepsItsChoice(t *testing.T) {
+	const (
+		optedOutGroup, optedOutSupergroup     = int64(-1), int64(-1001)
+		subscribedGroup, subscribedSupergroup = int64(-2), int64(-1002)
+	)
+	s, path := openTemp(t)
+	if _, err := s.Remove(optedOutGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(subscribedGroup); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetHour(subscribedGroup, 15); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDelivered("-2", today); err != nil {
+		t.Fatal(err)
+	}
+
+	for from, to := range map[int64]int64{optedOutGroup: optedOutSupergroup, subscribedGroup: subscribedSupergroup} {
+		if moved, err := s.Migrate(from, to); err != nil || !moved {
+			t.Fatalf("migrate %d: moved=%v err=%v, want moved", from, moved, err)
+		}
+	}
+
+	restarted, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, store := range map[string]*Store{"before restart": s, "after restart": restarted} {
+		if met, err := store.Meet(optedOutSupergroup); err != nil || met {
+			t.Fatalf("%s: met=%v err=%v, the opted-out supergroup must stay out", name, met, err)
+		}
+		if hour, ok := store.Hour(subscribedSupergroup); !ok || hour != 15 {
+			t.Fatalf("%s: hour=%d subscribed=%v, want the supergroup at 15", name, hour, ok)
+		}
+		if !store.Delivered("-1002", today) {
+			t.Fatalf("%s: the supergroup must keep today's delivery", name)
+		}
+		if _, ok := store.Hour(subscribedGroup); ok {
+			t.Fatalf("%s: the old id must be gone", name)
+		}
+	}
+}
+
+func TestMigrate_UnknownChatChangesNothing(t *testing.T) {
+	s, _ := openTemp(t)
+
+	if moved, err := s.Migrate(-1, -1001); err != nil || moved {
+		t.Fatalf("moved=%v err=%v, want nothing moved", moved, err)
+	}
+	if met, _ := s.Meet(-1001); !met {
+		t.Fatal("a new id with nothing moved to it is met as usual")
+	}
+}
+
+func TestMigrate_RollsBackWhenSaveFails(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sub", "subscribers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(-1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "sub", "subscribers.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Migrate(-1, -1001); err == nil {
+		t.Fatal("want a save error")
+	}
+	if _, ok := s.Hour(-1); !ok {
+		t.Fatal("a failed migrate must keep the old id")
+	}
+	if _, ok := s.Hour(-1001); ok {
+		t.Fatal("a failed migrate must not subscribe the new id")
+	}
+}
+
+// A file written before unsubscribed chats were recorded loads unchanged.
+func TestOpen_FileWithoutOptOutsLoadsUnchanged(t *testing.T) {
+	s, err := Open(writeFile(t, `{"chats":[5,30],"hours":{"5":9},"delivered":{"5":"`+today+`"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if hour, ok := s.Hour(5); !ok || hour != 9 {
+		t.Fatalf("chat 5: hour=%d ok=%v, want 9", hour, ok)
+	}
+	if hour, ok := s.Hour(30); !ok || hour != DefaultHour {
+		t.Fatalf("chat 30: hour=%d ok=%v, want %d", hour, ok, DefaultHour)
+	}
+	if !s.Delivered("5", today) {
+		t.Fatal("delivery record lost")
+	}
+}
+
+func TestSave_KeepsChatsReadableByThePreviousBuild(t *testing.T) {
+	s, path := openTemp(t)
+	if _, err := s.Add(5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Remove(6); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old struct {
+		Chats []int64 `json:"chats"`
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	if want := []int64{5}; !reflect.DeepEqual(old.Chats, want) {
+		t.Fatalf("chats in file %v, want %v", old.Chats, want)
+	}
+}

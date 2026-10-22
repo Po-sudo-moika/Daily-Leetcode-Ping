@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
@@ -33,6 +34,28 @@ func New(api API, chats []string, subscribers Subscribers) (Client, error) {
 		chats:       chats,
 		subscribers: subscribers,
 	}, nil
+}
+
+// ResolveFixedChats looks up the id of each fixed chat given by its @name,
+// with one getChat call each. From then on the chat is matched by its id, like
+// a fixed chat given by id: if it is also a subscriber, it gets one post a day,
+// at the hour it chose. A name that cannot be looked up is logged and kept, so
+// the chat still gets the post by name.
+func ResolveFixedChats(ctx context.Context, api API, chats []string) []string {
+	resolved := make([]string, 0, len(chats))
+	for _, chat := range chats {
+		if strings.HasPrefix(chat, "@") {
+			info, err := api.GetChat(ctx, &bot.GetChatParams{ChatID: chat})
+			if err != nil {
+				log.Errorf("fixed chat %s could not be looked up, it gets the post by name: %v", chat, err)
+			} else {
+				chat = strconv.FormatInt(info.ID, 10)
+			}
+		}
+		resolved = append(resolved, chat)
+	}
+
+	return resolved
 }
 
 func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
@@ -79,8 +102,7 @@ func (c *client) SendDue(ctx context.Context, now time.Time, question domain.Dai
 		switch {
 		case err == nil:
 			errs = append(errs, c.subscribers.MarkDelivered(strconv.FormatInt(chatID, 10), day))
-		case errors.Is(err, bot.ErrorForbidden):
-			// Telegram says the user blocked the bot (or the chat is gone).
+		case chatUnreachable(err):
 			c.dropSubscriber(chatID)
 		}
 	}
@@ -130,8 +152,24 @@ func (c *client) deliveryHour(chat string) (int, bool) {
 	return fixedChatsHour, false
 }
 
+// chatUnreachable reports an error from Telegram that says the chat will not
+// get a post any more: the user blocked the bot, the bot was kicked from the
+// group or channel, the chat does not exist, or the group moved to a new id
+// when it became a supergroup. Any other error, such as a timeout, may pass,
+// so it only fails this round.
+func chatUnreachable(err error) bool {
+	var migrated *bot.MigrateError
+	if errors.Is(err, bot.ErrorForbidden) || errors.As(err, &migrated) {
+		return true
+	}
+
+	notFound := errors.Is(err, bot.ErrorBadRequest) || errors.Is(err, bot.ErrorNotFound)
+
+	return notFound && strings.Contains(strings.ToLower(err.Error()), "chat not found")
+}
+
 func (c *client) dropSubscriber(chatID int64) {
-	if _, err := c.subscribers.Remove(chatID); err != nil {
+	if _, err := c.subscribers.Drop(chatID); err != nil {
 		log.Errorf("error while dropping subscriber %d: %v", chatID, err)
 		return
 	}

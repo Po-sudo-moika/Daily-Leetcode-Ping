@@ -26,7 +26,11 @@ const (
 	RepositoryURL = "https://github.com/Po-sudo-moika/Daily-Leetcode-Ping"
 
 	welcomeText = "👋 Привет! Я присылаю задачу дня с LeetCode каждый день, по умолчанию в 11:00 по Москве. " +
-		"Время можно выбрать в настройках.\n\nВыбери действие:"
+		"Время можно выбрать в настройках."
+
+	chooseText = "Выбери действие:"
+
+	notSubscribedStatus = "🛑 Сейчас подписка отключена."
 
 	unsubscribedText = "🛑 Подписка отключена. Чтобы вернуться, нажми «Подписаться»."
 
@@ -41,8 +45,8 @@ const (
 	// What people see in the bot's profile before they press Start. Telegram
 	// limits: description 512 characters, short description 120.
 	botDescription = "Присылаю задачу дня с LeetCode каждый день в удобный час (по умолчанию в 11:00 по Москве): " +
-		"название, сложность и ссылку.\n\nНажми «Начать» — откроется меню: там можно подписаться, " +
-		"выбрать час рассылки и отписаться."
+		"название, сложность и ссылку.\n\nНажми «Начать» — подписка включится сама, откроется меню: " +
+		"там можно выбрать час рассылки и отписаться. Меня можно добавить и в группу или канал."
 	botShortDescription = "Задача дня с LeetCode каждый день в удобный час по Москве"
 
 	hoursPerRow = 4
@@ -65,14 +69,18 @@ type target struct {
 type Menu struct {
 	api         API
 	subscribers Subscribers
+	fixedChats  []string
 }
 
-func NewMenu(api API, subscribers Subscribers) *Menu {
-	return &Menu{api: api, subscribers: subscribers}
+// NewMenu returns the menu. fixedChats are the chats from config.toml, as
+// ResolveFixedChats returns them.
+func NewMenu(api API, subscribers Subscribers, fixedChats []string) *Menu {
+	return &Menu{api: api, subscribers: subscribers, fixedChats: fixedChats}
 }
 
 // Register wires the menu handlers into the bot.
 func (m *Menu) Register(b *bot.Bot) {
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return update.MyChatMember != nil }, m.HandleMyChatMember)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommandStartOnly, m.HandleStart)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "settings", bot.MatchTypeCommandStartOnly, m.HandleSettingsCommand)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackSubscribe, bot.MatchTypeExact, m.HandleSubscribe)
@@ -115,7 +123,8 @@ func (m *Menu) HandleStart(ctx context.Context, _ *bot.Bot, update *models.Updat
 		return
 	}
 
-	m.send(ctx, update.Message.Chat.ID, mainScreen(welcomeText))
+	chatID := update.Message.Chat.ID
+	m.send(ctx, chatID, m.welcomeScreen(chatID))
 }
 
 // HandleSettingsCommand opens the settings screen in a new message.
@@ -156,7 +165,11 @@ func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models
 		return
 	}
 
-	m.show(ctx, t, mainScreen(unsubscribedText))
+	text := unsubscribedText
+	if m.isFixed(t.chatID) {
+		text = fixedStatus()
+	}
+	m.show(ctx, t, mainScreen(text))
 }
 
 func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -184,7 +197,7 @@ func (m *Menu) HandleBack(ctx context.Context, _ *bot.Bot, update *models.Update
 		return
 	}
 
-	m.show(ctx, t, mainScreen(welcomeText))
+	m.show(ctx, t, m.welcomeScreen(t.chatID))
 }
 
 // HandleHour saves the delivery hour of the pressed button and shows the
@@ -320,6 +333,50 @@ func withNote(note, text string) string {
 	}
 
 	return note + "\n\n" + text
+}
+
+// welcomeScreen is the menu with the chat's subscription state. A fixed chat
+// without a subscription of its own still gets the post, and is told so.
+func (m *Menu) welcomeScreen(chatID int64) screen {
+	hour, subscribed := m.subscribers.Hour(chatID)
+	if !subscribed && m.isFixed(chatID) {
+		return mainScreen(welcomeWith(fixedStatus()))
+	}
+
+	return mainScreen(welcomeFor(hour, subscribed))
+}
+
+// isFixed reports whether the chat is one of the chats from config.toml.
+func (m *Menu) isFixed(chatID int64) bool {
+	for _, chat := range m.fixedChats {
+		if id, err := strconv.ParseInt(chat, 10, 64); err == nil && id == chatID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// welcomeFor is the menu text for a chat that is subscribed at hour, or is not
+// subscribed.
+func welcomeFor(hour int, subscribed bool) string {
+	status := notSubscribedStatus
+	if subscribed {
+		status = fmt.Sprintf("✅ Сейчас подписка включена: каждый день в %s (МСК).", hourLabel(hour))
+	}
+
+	return welcomeWith(status)
+}
+
+func welcomeWith(status string) string {
+	return welcomeText + "\n\n" + status + "\n\n" + chooseText
+}
+
+// fixedStatus is the state of a fixed chat without a subscription of its own:
+// it gets the post anyway, at the fixed hour.
+func fixedStatus() string {
+	return fmt.Sprintf("✅ Этот чат в списке рассылки бота: задача дня приходит сюда каждый день в %s (МСК).",
+		hourLabel(fixedChatsHour))
 }
 
 func subscribedText(hour int) string {

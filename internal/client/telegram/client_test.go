@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 var question = domain.DailyQuestion{
@@ -436,5 +440,127 @@ func TestSendDue_HourChangeToPassedHourDeliversNextRound(t *testing.T) {
 	}
 	if got := round(t, c, api, at(12, 9, 0)); !slices.Equal(got, []any{int64(1)}) {
 		t.Fatalf("next day 09:00 sent to %v, want [1]", got)
+	}
+}
+
+func TestSendDue_DropsChatsTelegramCannotReachAnyMore(t *testing.T) {
+	gone := map[string]error{
+		"blocked":      errBlocked,
+		"kicked":       fmt.Errorf("%w, Forbidden: bot was kicked from the supergroup chat", bot.ErrorForbidden),
+		"not a member": fmt.Errorf("%w, Forbidden: bot is not a member of the channel chat", bot.ErrorForbidden),
+		"chat deleted": fmt.Errorf("%w, Bad Request: chat not found", bot.ErrorBadRequest),
+		"chat missing": fmt.Errorf("%w, Not Found: chat not found", bot.ErrorNotFound),
+		"mixed case":   fmt.Errorf("%w, Bad Request: Chat Not Found", bot.ErrorBadRequest),
+		"group upgraded": &bot.MigrateError{
+			Message:         fmt.Sprintf("%s: group chat was upgraded to a supergroup chat", bot.ErrorBadRequest),
+			MigrateToChatID: -1009,
+		},
+	}
+
+	for name, sendErr := range gone {
+		t.Run(name, func(t *testing.T) {
+			api := &fakeAPI{sendErr: map[any]error{int64(-1001): sendErr}}
+			subs := subscribed(-1001, 6)
+			c, _ := New(api, nil, subs)
+
+			if err := c.SendDue(context.Background(), at(11, 11, 0), question); err != nil {
+				t.Fatal(err)
+			}
+
+			if !slices.Equal(subs.chats(), []int64{6}) {
+				t.Fatalf("subscribers %v, want [6]", subs.chats())
+			}
+		})
+	}
+}
+
+func TestSendDue_KeepsChatOnOtherErrors(t *testing.T) {
+	other := map[string]error{
+		"timeout":        context.DeadlineExceeded,
+		"bad markdown":   fmt.Errorf("%w, Bad Request: can't parse entities", bot.ErrorBadRequest),
+		"server error":   errors.New("error response from telegram for method sendMessage, 502 Bad Gateway"),
+		"too many sends": &bot.TooManyRequestsError{Message: "slow down", RetryAfter: 5},
+	}
+
+	for name, sendErr := range other {
+		t.Run(name, func(t *testing.T) {
+			api := &fakeAPI{sendErr: map[any]error{int64(5): sendErr}}
+			subs := subscribed(5)
+			c, _ := New(api, nil, subs)
+
+			if err := c.SendDue(context.Background(), at(11, 11, 0), question); err != nil {
+				t.Fatal(err)
+			}
+
+			if !slices.Equal(subs.chats(), []int64{5}) {
+				t.Fatalf("subscribers %v, want [5]", subs.chats())
+			}
+		})
+	}
+}
+
+func TestResolveFixedChats_LooksUpEachNameOnce(t *testing.T) {
+	api := &fakeAPI{chatIDs: map[string]int64{"@mygroup": group}}
+
+	got := ResolveFixedChats(context.Background(), api, []string{"111", "@mygroup", "@gone"})
+
+	if want := []string{"111", "-1001", "@gone"}; !slices.Equal(got, want) {
+		t.Fatalf("fixed chats %v, want %v", got, want)
+	}
+	var asked []any
+	for _, params := range api.gotChats {
+		asked = append(asked, params.ChatID)
+	}
+	if want := []any{"@mygroup", "@gone"}; !slices.Equal(asked, want) {
+		t.Fatalf("looked up %v, want %v", asked, want)
+	}
+}
+
+// A fixed chat given by @name is found at start-up. When a member presses
+// Subscribe and picks 09:00, the chat gets one post a day, at 09:00. A name
+// that cannot be found still gets its post by name, at 11:00.
+func TestFixedChatByName_GetsOnePostADayAtTheHourItChose(t *testing.T) {
+	ctx := context.Background()
+	fixed := ResolveFixedChats(ctx, &fakeAPI{chatIDs: map[string]int64{"@mygroup": group}}, []string{"@mygroup", "@gone"})
+	subs := subscribed()
+	b, _ := newRegisteredBot(t, subs, fixed...)
+
+	b.ProcessUpdate(ctx, callbackUpdate(group, callbackSubscribe))
+	b.ProcessUpdate(ctx, callbackUpdate(group, callbackHourPrefix+"9"))
+
+	api := &fakeAPI{}
+	c, _ := New(api, fixed, subs)
+	var got []string
+	for hour := subscribers.MinHour; hour <= subscribers.MaxHour; hour++ {
+		before := len(api.sent)
+		if err := c.SendDue(ctx, at(11, hour, 0), question); err != nil {
+			t.Fatal(err)
+		}
+		for _, msg := range api.sent[before:] {
+			got = append(got, fmt.Sprintf("%s %v", hourLabel(hour), msg.ChatID))
+		}
+	}
+
+	if want := []string{"09:00 -1001", "11:00 @gone"}; !slices.Equal(got, want) {
+		t.Fatalf("posts of the day %q, want %q", got, want)
+	}
+}
+
+func TestSendDue_EveryKindOfChatGetsTheSamePost(t *testing.T) {
+	subs := subscribed(private, group, -1002)
+	api := &fakeAPI{}
+	c, _ := New(api, []string{"111", "@channel"}, subs)
+
+	if err := c.SendDue(context.Background(), at(11, 11, 0), question); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(api.sent) != 5 {
+		t.Fatalf("sent to %v, want 5 chats", api.recipients())
+	}
+	for _, msg := range api.sent {
+		if msg.Text != getPostMessageSchema(question) || msg.ParseMode != models.ParseModeMarkdown {
+			t.Fatalf("chat %v got a different post: %q (%s)", msg.ChatID, msg.Text, msg.ParseMode)
+		}
 	}
 }

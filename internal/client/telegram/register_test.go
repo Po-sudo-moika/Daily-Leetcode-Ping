@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
@@ -12,16 +13,17 @@ import (
 // These tests send updates through a real bot, to prove that Register wires
 // each update to the right handler.
 
-func newRegisteredBot(t *testing.T, subs *fakeSubscribers) (*bot.Bot, *fakeAPI) {
+func newRegisteredBot(t *testing.T, subs Subscribers, fixedChats ...string) (*bot.Bot, *fakeAPI) {
 	t.Helper()
 
-	b, err := bot.New("123456:fake-token-for-tests", bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
+	options := append(BotOptions(subs), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
+	b, err := bot.New("123456:fake-token-for-tests", options...)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	api := &fakeAPI{}
-	NewMenu(api, subs).Register(b)
+	NewMenu(api, subs, fixedChats).Register(b)
 
 	return b, api
 }
@@ -39,7 +41,7 @@ func TestRegister_StartCommand(t *testing.T) {
 
 	b.ProcessUpdate(context.Background(), commandUpdate(10, "/start"))
 
-	if len(api.sent) != 1 || api.sent[0].Text != welcomeText {
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultHour, true) {
 		t.Fatalf("unexpected reply to /start: %+v", api.sent)
 	}
 }
@@ -84,7 +86,7 @@ func TestRegister_Buttons(t *testing.T) {
 	for _, e := range api.edited {
 		texts = append(texts, e.Text)
 	}
-	if len(texts) != 6 || texts[0] != subscribedText(11) || texts[3] != welcomeText || texts[4] != aboutText || texts[5] != unsubscribedText {
+	if len(texts) != 6 || texts[0] != subscribedText(11) || texts[3] != welcomeFor(15, true) || texts[4] != aboutText || texts[5] != unsubscribedText {
 		t.Fatalf("edited texts %q", texts)
 	}
 }
