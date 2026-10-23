@@ -26,7 +26,8 @@ chat picks another time with `/settings`. Nobody has to press Subscribe:
   command does not subscribe it. The choice is kept in the subscribers file,
   so it survives a restart.
 - **A group that Telegram turns into a supergroup** gets a new chat id. It
-  keeps its choice under the new id: its time, or its Unsubscribe.
+  keeps its choice under the new id: its time, or its Unsubscribe, and its
+  language.
 
 ### Groups: admins only
 
@@ -122,8 +123,9 @@ never commit it. The token is not part of `config.toml`.
 - `storage.subscribersPath` — where subscriptions are saved
   (default `data/subscribers.json`). The `data/` folder is ignored by git.
   The file lists the subscribed chats, their chosen hours and minutes, the
-  chats that pressed Unsubscribe (`optedOut`) and the last post day of each
-  chat (kept for 90 days). A file from an earlier version loads as is: every
+  chats that pressed Unsubscribe (`optedOut`), the last post day of each
+  chat (kept for 90 days), the chats switched to English (`languages`) and
+  the chats that got the hello (`greeted`). A file from an earlier version loads as is: every
   chat keeps its hour, at `:00`.
 
 ### Owner and `/chats`

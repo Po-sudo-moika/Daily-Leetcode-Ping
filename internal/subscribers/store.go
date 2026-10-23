@@ -84,8 +84,9 @@ func (l Language) Other() Language {
 var ErrNotSubscribed = errors.New("chat is not subscribed")
 
 // Store keeps the subscribers, their delivery time, the chats that chose to
-// unsubscribe and the day each chat last got the post in a small JSON file, so
-// that all of it survives a restart. It is safe for concurrent use.
+// unsubscribe, the day each chat last got the post, each chat's language and
+// the chats already greeted in a small JSON file, so that all of it survives a
+// restart. It is safe for concurrent use.
 //
 // A day is a Moscow date in time.DateOnly form, such as "2026-10-11". A chat
 // in the delivery records is a subscriber's id or a chat from config.toml.
@@ -310,8 +311,8 @@ func (s *Store) Drop(chatID int64) (bool, error) {
 
 // Migrate moves a chat to its new id when Telegram turns a group into a
 // supergroup: its subscription and time, or its Unsubscribe, its language and
-// greeting, and the day it last got the post. The old id is forgotten. It reports whether there was
-// anything to move. A failed save leaves the store as it was.
+// greeting, and the day it last got the post. The old id is forgotten. It
+// reports whether there was anything to move. A failed save leaves the store as it was.
 func (s *Store) Migrate(from, to int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
