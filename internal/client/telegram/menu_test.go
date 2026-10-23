@@ -304,6 +304,25 @@ func TestHandleSettings_ShowsHoursWithCurrentChoiceMarked(t *testing.T) {
 	}
 }
 
+func TestHandleSettings_MarkedHourShowsTheSavedMinutes(t *testing.T) {
+	subs := subscribed()
+	subs.set(10, subscribers.At(9, 30))
+	menu, api := newMenu(subs)
+
+	menu.HandleSettings(context.Background(), nil, callbackUpdate(10, callbackSettings))
+
+	edit := onlyEdit(t, api)
+	var marked []string
+	for _, b := range buttons(t, edit.ReplyMarkup) {
+		if strings.HasPrefix(b.CallbackData, callbackHourPrefix) && strings.HasPrefix(b.Text, "✅") {
+			marked = append(marked, b.CallbackData+" "+b.Text)
+		}
+	}
+	if want := []string{callbackHourPrefix + "9 ✅ 09:30"}; !slices.Equal(marked, want) {
+		t.Fatalf("marked hour buttons %v, want %v", marked, want)
+	}
+}
+
 func TestHandleSettings_NotSubscribed(t *testing.T) {
 	menu, api := newMenu(subscribed())
 

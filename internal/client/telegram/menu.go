@@ -400,7 +400,7 @@ func (m *Menu) settingsScreen(chatID int64, note string) screen {
 
 		label := hourLabel(h)
 		if h == at/60 {
-			label = "✅ " + label
+			label = "✅ " + subscribers.Format(at)
 		}
 		last := len(rows) - 1
 		rows[last] = append(rows[last], models.InlineKeyboardButton{Text: label, CallbackData: callbackHourPrefix + strconv.Itoa(h)})

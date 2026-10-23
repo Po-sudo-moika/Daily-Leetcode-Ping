@@ -3,11 +3,17 @@ package daily
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/telegram"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 type fakeLeetcode struct {
@@ -92,6 +98,60 @@ func TestDeliver_FetchFailureRecordsNothing(t *testing.T) {
 	Deliver(context.Background(), lc, sender, round.Add(50*time.Minute))
 	if !slices.Equal(sender.sent, []string{"5", "@news"}) {
 		t.Fatalf("next round sent to %v, want [5 @news]", sender.sent)
+	}
+}
+
+// telegramAPI stands in for Telegram under the real client and records the
+// chats it sends to. The client uses no other call in a round.
+type telegramAPI struct {
+	telegram.API
+	sent []string
+}
+
+func (a *telegramAPI) SendMessage(_ context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+	a.sent = append(a.sent, fmt.Sprint(params.ChatID))
+
+	return &models.Message{}, nil
+}
+
+// LeetCode is down from 10:55, when one subscriber is due, until 11:00. The
+// failed fetches must not hold back the 11:00 round: once LeetCode answers,
+// the 10:55 subscriber, the fixed chat and the 11:00 subscriber get the post.
+func TestDeliver_FailedFetchDoesNotDelayLaterTimes(t *testing.T) {
+	store, err := subscribers.Open(filepath.Join(t.TempDir(), "subscribers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chatID := range []int64{1, 2} {
+		if _, err := store.Add(chatID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SetTime(1, subscribers.At(10, 55)); err != nil {
+		t.Fatal(err)
+	}
+	api := &telegramAPI{}
+	sender, err := telegram.New(api, []string{"5"}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc := &fakeLeetcode{err: errors.New("leetcode timeout"), title: "Two Sum"}
+	at := func(hour, minute int) time.Time {
+		return time.Date(round.Year(), round.Month(), round.Day(), hour, minute, 0, 0, round.Location())
+	}
+
+	for minute := 55; minute < 60; minute++ {
+		Deliver(context.Background(), lc, sender, at(10, minute))
+	}
+	if len(api.sent) != 0 {
+		t.Fatalf("sent to %v while LeetCode was down", api.sent)
+	}
+
+	lc.err = nil
+	Deliver(context.Background(), lc, sender, at(11, 0))
+	slices.Sort(api.sent)
+	if want := []string{"1", "2", "5"}; !slices.Equal(api.sent, want) {
+		t.Fatalf("the 11:00 round sent to %v, want %v", api.sent, want)
 	}
 }
 

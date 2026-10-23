@@ -61,8 +61,8 @@ run after the host wakes up, or after a restart, catches up on the times it
 missed. A send that fails is tried again in the next clock hour, not every
 minute. After a change of time, a chat that already got today's post waits for
 tomorrow; one that has not gets it at the first minute at or after its new
-time. It asks LeetCode for the problem only when someone is due, and after a
-failed ask it waits an hour before asking again. A fixed chat that is also a
+time. It asks LeetCode for the problem only when someone is due; a failed ask
+is tried again the next minute. A fixed chat that is also a
 subscriber gets the post once a day, at its chosen time.
 The start-up post goes to the fixed chats only, so a restart does not send
 subscribers a second copy. Once a fixed chat's delivery time has come (11:00,
@@ -103,20 +103,16 @@ never commit it. The token is not part of `config.toml`.
   chats that pressed Unsubscribe (`optedOut`) and the last post day of each
   chat (kept for 90 days). A file from an earlier version loads as is: every
   chat keeps its hour, at `:00`.
-- `telegram.ownerId` — the Telegram user id of the bot's owner, see below. The
-  committed `config.toml` has `0` (no owner).
 
 ### Owner and `/chats`
 
 `/chats` lists every chat the bot knows. It answers only the bot's owner: a
 Telegram user id you set in local configuration. Anyone else gets no answer,
 and with no owner set the command is off. To find your id, ask a bot such as
-`@userinfobot`. Then set it in one of these places (the first one found wins):
-
-1. the `TELEGRAM_OWNER_ID` environment variable;
-2. `TELEGRAM_OWNER_ID=...` in the `.env` file, next to the bot token (the
-   Docker `--env-file .env` passes it into the container);
-3. `telegram.ownerId` in a local, uncommitted copy of `config.toml`.
+`@userinfobot`. Then set it in the `TELEGRAM_OWNER_ID` environment variable,
+or as `TELEGRAM_OWNER_ID=...` in the `.env` file, next to the bot token (the
+Docker `--env-file .env` passes it into the container). The variable wins over
+the file. The id is not part of `config.toml`.
 
 Never commit your id: this repository is public.
 
