@@ -31,8 +31,8 @@ chat picks another time with `/settings`. Nobody has to press Subscribe:
 ### Groups: admins only
 
 In a group or supergroup, only the group's admins (the creator or an
-administrator) can change the time, subscribe or unsubscribe, with the menu
-buttons or from `/settings`. Anyone else who presses one of those buttons
+administrator) can change the time or the language, subscribe or unsubscribe,
+with the menu buttons or from `/settings`. Anyone else who presses one of those buttons
 gets a short note that only admins can change it, and nothing changes. If
 Telegram cannot say whether the person is an admin, nothing changes either,
 and the note asks them to try again. Everyone can still open the screens
@@ -49,6 +49,28 @@ members who press buttons, so it has no such rule.
   carries the previous day's problem. The Back button on the minutes goes back
   to the hours.
 - **О проекте** — short description and a link to this repository.
+- **🇬🇧 English / 🇷🇺 Русский** — switch the chat to the other language. The
+  button is labelled in the language it switches to, and the menu is redrawn in
+  place.
+
+## Language and greeting
+
+Each chat has a language, Russian or English, and every chat starts in
+Russian. The button at the bottom of the menu switches the chat; the choice is
+kept in the subscribers file, so it survives a restart. Everything the bot
+sends to that chat follows it: the menu and its screens, the notes (such as
+"admins only"), the greeting and the daily post. The `/chats` list for the
+owner follows the language of the owner's private chat. A subscribers file from
+an earlier version loads with every chat in Russian.
+
+The first time a chat sends `/start` (or presses Start), the bot first sends a
+short hello in the chat's language: who it is and what it does. Then it shows
+the menu, as before. Each chat gets the hello once, and that is kept in the
+subscribers file, so a later `/start` shows only the menu. Chats that used the
+bot before the greeting existed get it once on their next `/start`.
+
+The bot's profile (the description shown before Start, and the command list)
+is the same for everyone and stays in Russian.
 
 ## Delivery
 

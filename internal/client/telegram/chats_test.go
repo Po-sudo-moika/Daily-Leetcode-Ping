@@ -186,7 +186,7 @@ func TestMyChatMember_IgnoresUpdateWithoutMembership(t *testing.T) {
 }
 
 func TestFirstContact_NewPrivateChatIsSubscribedByStart(t *testing.T) {
-	subs := subscribed()
+	subs := subscribed().greet(private)
 	b, api := newRegisteredBot(t, subs)
 
 	b.ProcessUpdate(context.Background(), commandUpdate(private, "/start"))
@@ -194,7 +194,7 @@ func TestFirstContact_NewPrivateChatIsSubscribedByStart(t *testing.T) {
 	if hour, ok := subs.Time(private); !ok || hour != subscribers.DefaultTime {
 		t.Fatalf("hour=%d subscribed=%v, want subscribed at %d with no Subscribe press", hour, ok, subscribers.DefaultHour)
 	}
-	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultTime, true) {
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultTime, true, subscribers.Russian) {
 		t.Fatalf("the menu must show the subscribed state: %+v", api.sent)
 	}
 }
@@ -328,7 +328,7 @@ func TestFirstContact_UnsubscribedChatStaysOutAlsoAfterRestart(t *testing.T) {
 	if _, ok := restarted.Time(private); ok {
 		t.Fatal("after a restart /start must not subscribe a chat that pressed Unsubscribe")
 	}
-	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(0, false) {
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(0, false, subscribers.Russian) {
 		t.Fatalf("the menu must show the unsubscribed state: %+v", api.sent)
 	}
 
@@ -340,7 +340,7 @@ func TestFirstContact_UnsubscribedChatStaysOutAlsoAfterRestart(t *testing.T) {
 }
 
 func TestFirstContact_StoreFailureStillAnswers(t *testing.T) {
-	subs := subscribed()
+	subs := subscribed().greet(private)
 	subs.failWrite = errBlocked
 	b, api := newRegisteredBot(t, subs)
 

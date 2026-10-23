@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
@@ -64,6 +65,12 @@ type Subscribers interface {
 	Due(now int, day string) []int64
 	// Known returns the subscribed chats and the ones that unsubscribed.
 	Known() []int64
+	// Language returns the language of a chat: Russian until it switches.
+	Language(chatID int64) subscribers.Language
+	SetLanguage(chatID int64, lang subscribers.Language) error
+	// Greeted reports whether the chat was sent the hello of its first /start.
+	Greeted(chatID int64) bool
+	MarkGreeted(chatID int64) error
 	// Delivered reports whether chat got the post on day.
 	Delivered(chat, day string) bool
 	// LastDelivered returns the last day chat got the post; "" for none.

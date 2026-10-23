@@ -64,7 +64,7 @@ func TestAdminsOnly_MemberOfAGroupChangesNothingAndGetsTheNote(t *testing.T) {
 				if len(api.edited) != 0 || len(api.sent) != 0 {
 					t.Fatalf("the menu changed: edited %d, sent %d", len(api.edited), len(api.sent))
 				}
-				if len(api.answered) != 1 || api.answered[0].CallbackQueryID != "cb-1" || api.answered[0].Text != adminsOnlyText {
+				if len(api.answered) != 1 || api.answered[0].CallbackQueryID != "cb-1" || api.answered[0].Text != adminsOnlyText.in(subscribers.Russian) {
 					t.Fatalf("answers %+v, want one with the admins-only note", api.answered)
 				}
 				if len(api.asked) != 1 || api.asked[0].ChatID != group || api.asked[0].UserID != memberUser {
@@ -120,7 +120,7 @@ func TestAdminsOnly_FailedCheckChangesNothing(t *testing.T) {
 	if at, _ := subs.Time(group); at != subscribers.At(9, 30) {
 		t.Fatalf("time changed to %s", subscribers.Format(at))
 	}
-	if len(api.edited) != 0 || len(api.answered) != 1 || api.answered[0].Text != adminCheckFailedText {
+	if len(api.edited) != 0 || len(api.answered) != 1 || api.answered[0].Text != adminCheckFailedText.in(subscribers.Russian) {
 		t.Fatalf("edited %d, answers %+v, want one note that the check failed", len(api.edited), api.answered)
 	}
 }

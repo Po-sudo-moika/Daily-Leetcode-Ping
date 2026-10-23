@@ -151,14 +151,27 @@ type fakeSubscribers struct {
 	times     map[int64]int
 	optedOut  map[int64]bool
 	delivered map[string]string
+	languages map[int64]subscribers.Language
+	greeted   map[int64]bool
 	failWrite error
 }
 
-// subscribed returns a fake with these chats at the default time.
+// subscribed returns a fake with these chats at the default time. They have
+// had their greeting already, so /start shows only the menu.
 func subscribed(chats ...int64) *fakeSubscribers {
 	f := &fakeSubscribers{}
 	for _, chatID := range chats {
 		f.set(chatID, subscribers.DefaultTime)
+		_ = f.MarkGreeted(chatID)
+	}
+
+	return f
+}
+
+// greet marks chats as greeted, as after their first /start. It returns f.
+func (f *fakeSubscribers) greet(chats ...int64) *fakeSubscribers {
+	for _, chatID := range chats {
+		_ = f.MarkGreeted(chatID)
 	}
 
 	return f
@@ -297,6 +310,39 @@ func (f *fakeSubscribers) Known() []int64 {
 	slices.Sort(out)
 
 	return out
+}
+
+func (f *fakeSubscribers) Language(chatID int64) subscribers.Language {
+	if lang, ok := f.languages[chatID]; ok {
+		return lang
+	}
+
+	return subscribers.Russian
+}
+
+func (f *fakeSubscribers) SetLanguage(chatID int64, lang subscribers.Language) error {
+	if f.failWrite != nil {
+		return f.failWrite
+	}
+	if f.languages == nil {
+		f.languages = map[int64]subscribers.Language{}
+	}
+	f.languages[chatID] = lang
+
+	return nil
+}
+
+func (f *fakeSubscribers) Greeted(chatID int64) bool {
+	return f.greeted[chatID]
+}
+
+func (f *fakeSubscribers) MarkGreeted(chatID int64) error {
+	if f.greeted == nil {
+		f.greeted = map[int64]bool{}
+	}
+	f.greeted[chatID] = true
+
+	return nil
 }
 
 func (f *fakeSubscribers) LastDelivered(chat string) string {

@@ -30,8 +30,10 @@ func (m *Menu) HandleChats(ctx context.Context, _ *bot.Bot, update *models.Updat
 		return
 	}
 
+	// The list goes to the private chat of the owner, so it follows its language.
+	lang := m.subscribers.Language(m.ownerID)
 	entries := m.knownChats()
-	for _, text := range splitMessages(chatsHeader(len(entries)), m.describeChats(ctx, entries)) {
+	for _, text := range splitMessages(chatsHeader(len(entries), lang), m.describeChats(ctx, entries, lang)) {
 		// The private chat of a user has the id of the user.
 		if _, err := m.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: m.ownerID, Text: text}); err != nil {
 			log.Errorf("error while sending the chat list to the owner: %v", err)
@@ -82,19 +84,19 @@ func (m *Menu) knownChats() []knownChat {
 	return chats
 }
 
-func chatsHeader(n int) string {
+func chatsHeader(n int, lang subscribers.Language) string {
 	if n == 0 {
-		return "Чатов пока нет."
+		return message{ru: "Чатов пока нет.", en: "No chats yet."}.in(lang)
 	}
 
-	return fmt.Sprintf("Чаты бота: %d", n)
+	return fmt.Sprintf(message{ru: "Чаты бота: %d", en: "Bot chats: %d"}.in(lang), n)
 }
 
 // describeChats asks Telegram about each chat and describes it in a few lines.
-func (m *Menu) describeChats(ctx context.Context, chats []knownChat) []string {
+func (m *Menu) describeChats(ctx context.Context, chats []knownChat, lang subscribers.Language) []string {
 	blocks := make([]string, 0, len(chats))
 	for i, chat := range chats {
-		blocks = append(blocks, fmt.Sprintf("%d. %s\n   %s", i+1, m.chatTitle(ctx, chat), m.chatState(chat)))
+		blocks = append(blocks, fmt.Sprintf("%d. %s\n   %s", i+1, m.chatTitle(ctx, chat, lang), m.chatState(chat, lang)))
 	}
 
 	return blocks
@@ -102,21 +104,21 @@ func (m *Menu) describeChats(ctx context.Context, chats []knownChat) []string {
 
 // chatTitle is the name and type of the chat as Telegram tells them, or a
 // note when Telegram cannot find it, with the id or name to tell the chat by.
-func (m *Menu) chatTitle(ctx context.Context, chat knownChat) string {
+func (m *Menu) chatTitle(ctx context.Context, chat knownChat, lang subscribers.Language) string {
 	info, err := m.api.GetChat(ctx, &bot.GetChatParams{ChatID: chat.ref})
 	switch {
 	case err == nil:
-		return fmt.Sprintf("%s — %s (%s)", chatName(info), chatTypeName(info.Type), chat.key)
+		return fmt.Sprintf("%s — %s (%s)", chatName(info, lang), chatTypeName(info.Type, lang), chat.key)
 	case chatUnreachable(err):
-		return fmt.Sprintf("⚠️ Telegram не нашёл этот чат (%s)", chat.key)
+		return fmt.Sprintf(message{ru: "⚠️ Telegram не нашёл этот чат (%s)", en: "⚠️ Telegram could not find this chat (%s)"}.in(lang), chat.key)
 	default:
 		log.Errorf("error while asking Telegram about a chat: %v", err)
-		return fmt.Sprintf("❓ Не удалось спросить Telegram про чат (%s)", chat.key)
+		return fmt.Sprintf(message{ru: "❓ Не удалось спросить Telegram про чат (%s)", en: "❓ Could not ask Telegram about the chat (%s)"}.in(lang), chat.key)
 	}
 }
 
 // chatState is the delivery time, the subscription and the last post day.
-func (m *Menu) chatState(chat knownChat) string {
+func (m *Menu) chatState(chat knownChat, lang subscribers.Language) string {
 	var parts []string
 
 	at, subscribed := 0, false
@@ -126,27 +128,29 @@ func (m *Menu) chatState(chat knownChat) string {
 
 	switch {
 	case subscribed:
-		parts = append(parts, "время "+subscribers.Format(at)+" МСК", "подписан")
+		parts = append(parts, message{ru: "время ", en: "time "}.in(lang)+subscribers.Format(at)+message{ru: " МСК", en: " MSK"}.in(lang),
+			message{ru: "подписан", en: "subscribed"}.in(lang))
 	case chat.fixed:
-		parts = append(parts, "время "+subscribers.Format(fixedChatsTime)+" МСК", "подписки нет")
+		parts = append(parts, message{ru: "время ", en: "time "}.in(lang)+subscribers.Format(fixedChatsTime)+message{ru: " МСК", en: " MSK"}.in(lang),
+			message{ru: "подписки нет", en: "no subscription"}.in(lang))
 	default:
-		parts = append(parts, "время —", "отписан")
+		parts = append(parts, message{ru: "время —", en: "time —"}.in(lang), message{ru: "отписан", en: "unsubscribed"}.in(lang))
 	}
 
 	if chat.fixed {
-		parts = append(parts, "чат из config.toml")
+		parts = append(parts, message{ru: "чат из config.toml", en: "chat from config.toml"}.in(lang))
 	}
 
 	last := m.subscribers.LastDelivered(chat.key)
 	if last == "" {
 		last = "—"
 	}
-	parts = append(parts, "последний пост: "+last)
+	parts = append(parts, message{ru: "последний пост: ", en: "last post: "}.in(lang)+last)
 
 	return strings.Join(parts, " · ")
 }
 
-func chatName(info *models.ChatFullInfo) string {
+func chatName(info *models.ChatFullInfo, lang subscribers.Language) string {
 	var name string
 	switch {
 	case info.Title != "":
@@ -162,22 +166,22 @@ func chatName(info *models.ChatFullInfo) string {
 		return name + " @" + info.Username
 	}
 	if name == "" {
-		return "без названия"
+		return message{ru: "без названия", en: "no name"}.in(lang)
 	}
 
 	return name
 }
 
-func chatTypeName(t models.ChatType) string {
+func chatTypeName(t models.ChatType, lang subscribers.Language) string {
 	switch t {
 	case models.ChatTypePrivate:
-		return "личный чат"
+		return message{ru: "личный чат", en: "private chat"}.in(lang)
 	case models.ChatTypeGroup:
-		return "группа"
+		return message{ru: "группа", en: "group"}.in(lang)
 	case models.ChatTypeSupergroup:
-		return "супергруппа"
+		return message{ru: "супергруппа", en: "supergroup"}.in(lang)
 	case models.ChatTypeChannel:
-		return "канал"
+		return message{ru: "канал", en: "channel"}.in(lang)
 	}
 
 	return string(t)

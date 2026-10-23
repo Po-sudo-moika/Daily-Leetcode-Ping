@@ -158,7 +158,7 @@ func TestSendDue_FixedChatsAndSubscribersAtDefaultHour(t *testing.T) {
 		t.Fatalf("sent to %v, want %v", api.recipients(), want)
 	}
 	for _, p := range api.sent {
-		if p.Text != getPostMessageSchema(question) {
+		if p.Text != getPostMessageSchema(question, subscribers.Russian) {
 			t.Fatalf("unexpected text %q", p.Text)
 		}
 	}
@@ -579,7 +579,7 @@ func TestSendDue_EveryKindOfChatGetsTheSamePost(t *testing.T) {
 		t.Fatalf("sent to %v, want 5 chats", api.recipients())
 	}
 	for _, msg := range api.sent {
-		if msg.Text != getPostMessageSchema(question) || msg.ParseMode != models.ParseModeMarkdown {
+		if msg.Text != getPostMessageSchema(question, subscribers.Russian) || msg.ParseMode != models.ParseModeMarkdown {
 			t.Fatalf("chat %v got a different post: %q (%s)", msg.ChatID, msg.Text, msg.ParseMode)
 		}
 	}

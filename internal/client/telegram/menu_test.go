@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,7 +89,7 @@ func markedHours(t *testing.T, markup any) []string {
 }
 
 func TestHandleStart_ShowsWelcomeAndMenu(t *testing.T) {
-	menu, api := newMenu(subscribed())
+	menu, api := newMenu(subscribed().greet(10))
 
 	menu.HandleStart(context.Background(), nil, startUpdate(10))
 
@@ -99,12 +100,12 @@ func TestHandleStart_ShowsWelcomeAndMenu(t *testing.T) {
 	if msg.ChatID != int64(10) {
 		t.Fatalf("sent to %v, want 10", msg.ChatID)
 	}
-	if msg.Text != welcomeFor(0, false) {
+	if msg.Text != welcomeFor(0, false, subscribers.Russian) {
 		t.Fatalf("text %q, want welcome text", msg.Text)
 	}
 
 	got := callbacks(t, msg.ReplyMarkup)
-	want := []string{callbackSubscribe, callbackUnsubscribe, callbackSettings, callbackAbout}
+	want := []string{callbackSubscribe, callbackUnsubscribe, callbackSettings, callbackAbout, callbackLanguagePrefix + "en"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("menu buttons %v, want %v", got, want)
 	}
@@ -131,10 +132,10 @@ func TestHandleSubscribe_EditsMenuInPlace(t *testing.T) {
 		t.Fatalf("subscribers %v, want [10]", subs.chats())
 	}
 	edit := onlyEdit(t, api)
-	if edit.Text != subscribedText(subscribers.DefaultTime) || !strings.Contains(edit.Text, "11:00") {
+	if edit.Text != subscribedText(subscribers.DefaultTime, subscribers.Russian) || !strings.Contains(edit.Text, "11:00") {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
-	if got := callbacks(t, edit.ReplyMarkup); !slices.Contains(got, callbackSettings) || len(got) != 4 {
+	if got := callbacks(t, edit.ReplyMarkup); !slices.Contains(got, callbackSettings) || len(got) != 5 {
 		t.Fatalf("edit must keep the menu buttons: %v", got)
 	}
 }
@@ -179,7 +180,7 @@ func TestHandleUnsubscribe_EditsMenuInPlace(t *testing.T) {
 		t.Fatalf("subscribers %v, want [20]", subs.chats())
 	}
 	edit := onlyEdit(t, api)
-	if edit.Text != unsubscribedText {
+	if edit.Text != unsubscribedText.in(subscribers.Russian) {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 	if len(buttons(t, edit.ReplyMarkup)) == 0 {
@@ -192,7 +193,7 @@ func TestHandleUnsubscribe_WhenNotSubscribed(t *testing.T) {
 
 	menu.HandleUnsubscribe(context.Background(), nil, callbackUpdate(10, callbackUnsubscribe))
 
-	if edit := onlyEdit(t, api); edit.Text != unsubscribedText {
+	if edit := onlyEdit(t, api); edit.Text != unsubscribedText.in(subscribers.Russian) {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 }
@@ -213,7 +214,7 @@ func TestSubscribeUnsubscribe_ReportStoreFailure(t *testing.T) {
 
 			handler(menu)(context.Background(), callbackUpdate(10, name))
 
-			if edit := onlyEdit(t, api); edit.Text != saveFailedText {
+			if edit := onlyEdit(t, api); edit.Text != saveFailedText.in(subscribers.Russian) {
 				t.Fatalf("unexpected text %q", edit.Text)
 			}
 		})
@@ -227,7 +228,7 @@ func TestHandleAbout_OpensScreenWithBackButton(t *testing.T) {
 	menu.HandleAbout(context.Background(), nil, callbackUpdate(10, callbackAbout))
 
 	edit := onlyEdit(t, api)
-	if edit.Text != aboutText || !strings.Contains(aboutText, "LeetCode") {
+	if edit.Text != aboutText.in(subscribers.Russian) || !strings.Contains(aboutText.in(subscribers.Russian), "LeetCode") {
 		t.Fatalf("unexpected about text: %q", edit.Text)
 	}
 
@@ -255,7 +256,7 @@ func TestHandleBack_ReturnsToMenu(t *testing.T) {
 	menu.HandleBack(context.Background(), nil, callbackUpdate(10, callbackMenu))
 
 	edit := onlyEdit(t, api)
-	if edit.Text != welcomeFor(0, false) {
+	if edit.Text != welcomeFor(0, false, subscribers.Russian) {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 	if got := callbacks(t, edit.ReplyMarkup); !slices.Contains(got, callbackSubscribe) {
@@ -329,7 +330,7 @@ func TestHandleSettings_NotSubscribed(t *testing.T) {
 	menu.HandleSettings(context.Background(), nil, callbackUpdate(10, callbackSettings))
 
 	edit := onlyEdit(t, api)
-	if edit.Text != settingsNotSubscribedText {
+	if edit.Text != settingsNotSubscribedText.in(subscribers.Russian) {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 	if got := callbacks(t, edit.ReplyMarkup); !slices.Equal(got, []string{callbackSubscribe, callbackMenu}) {
@@ -514,8 +515,8 @@ func TestHandleHour_NotSubscribedShowsTheSettingsScreen(t *testing.T) {
 
 	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"9"))
 
-	if got := onlyEdit(t, api).Text; got != settingsNotSubscribedText {
-		t.Fatalf("text %q, want %q", got, settingsNotSubscribedText)
+	if got := onlyEdit(t, api).Text; got != settingsNotSubscribedText.in(subscribers.Russian) {
+		t.Fatalf("text %q, want %q", got, settingsNotSubscribedText.in(subscribers.Russian))
 	}
 }
 
@@ -527,7 +528,7 @@ func TestHandleTime_ReportsStoreFailure(t *testing.T) {
 	menu.HandleTime(context.Background(), nil, callbackUpdate(10, timeData(9, 30)))
 
 	edit := onlyEdit(t, api)
-	if !strings.Contains(edit.Text, saveFailedText) {
+	if !strings.Contains(edit.Text, saveFailedText.in(subscribers.Russian)) {
 		t.Fatalf("text must report the failure: %q", edit.Text)
 	}
 	if marked := markedHours(t, edit.ReplyMarkup); !slices.Equal(marked, []string{callbackHourPrefix + "11"}) {
@@ -537,7 +538,7 @@ func TestHandleTime_ReportsStoreFailure(t *testing.T) {
 
 // A whole visit goes through one message: every press edits message 77.
 func TestWholeVisit_NeverSendsANewMessage(t *testing.T) {
-	menu, api := newMenu(subscribed())
+	menu, api := newMenu(subscribed().greet(10))
 	ctx := context.Background()
 
 	menu.HandleStart(ctx, nil, startUpdate(10))
@@ -590,7 +591,7 @@ func TestEditFallback_SendsOneNewMenuWhenMessageCannotBeEdited(t *testing.T) {
 				t.Fatalf("sent %d messages, want one new menu", len(api.sent))
 			}
 			msg := api.sent[0]
-			if msg.ChatID != int64(10) || msg.Text != subscribedText(subscribers.DefaultTime) {
+			if msg.ChatID != int64(10) || msg.Text != subscribedText(subscribers.DefaultTime, subscribers.Russian) {
 				t.Fatalf("unexpected new menu: %+v", msg)
 			}
 			if got := callbacks(t, msg.ReplyMarkup); !slices.Contains(got, callbackSettings) {
@@ -700,7 +701,7 @@ func TestOldMenuMessage_FallsBackToANewMenu(t *testing.T) {
 	if !slices.Equal(subs.chats(), []int64{10}) {
 		t.Fatalf("subscribers %v, want [10]", subs.chats())
 	}
-	if len(api.sent) != 2 || api.sent[0].Text != subscribedText(subscribers.DefaultTime) || api.sent[1].Text != aboutText {
+	if len(api.sent) != 2 || api.sent[0].Text != subscribedText(subscribers.DefaultTime, subscribers.Russian) || api.sent[1].Text != aboutText.in(subscribers.Russian) {
 		t.Fatalf("unexpected replies: %+v", api.sent)
 	}
 }
@@ -764,26 +765,26 @@ func TestSetup_ReportsErrorsButTriesEverything(t *testing.T) {
 // menu must not tell it the post is off.
 func TestWelcome_FixedChatWithoutSubscriptionIsToldItGetsThePost(t *testing.T) {
 	api := &fakeAPI{}
-	menu := NewMenu(api, subscribed(group), []string{"-1001", "@gone"})
+	menu := NewMenu(api, subscribed(group).greet(private), []string{"-1001", "@gone"})
 	ctx := context.Background()
 
 	menu.HandleUnsubscribe(ctx, nil, callbackUpdate(group, callbackUnsubscribe))
-	if len(api.edited) != 1 || api.edited[0].Text != fixedStatus() || !strings.Contains(fixedStatus(), "11:00") {
+	if len(api.edited) != 1 || api.edited[0].Text != fixedStatus(subscribers.Russian) || !strings.Contains(fixedStatus(subscribers.Russian), "11:00") {
 		t.Fatalf("after Unsubscribe the fixed chat must be told it gets the post at 11:00: %+v", api.edited)
 	}
 
 	menu.HandleStart(ctx, nil, startUpdate(group))
 	menu.HandleStart(ctx, nil, startUpdate(private))
-	if len(api.sent) != 2 || api.sent[0].Text != welcomeWith(fixedStatus()) {
+	if len(api.sent) != 2 || api.sent[0].Text != welcomeWith(fixedStatus(subscribers.Russian), subscribers.Russian) {
 		t.Fatalf("the fixed chat must be told it gets the post at 11:00: %+v", api.sent)
 	}
-	if api.sent[1].Text != welcomeFor(0, false) {
+	if api.sent[1].Text != welcomeFor(0, false, subscribers.Russian) {
 		t.Fatalf("another chat sees %q, want the unsubscribed state", api.sent[1].Text)
 	}
 }
 
 func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
-	subs := subscribed()
+	subs := subscribed().greet(10, 20)
 	subs.set(10, subscribers.At(15, 0))
 	menu, api := newMenu(subs)
 
@@ -793,13 +794,111 @@ func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
 	if len(api.sent) != 2 {
 		t.Fatalf("sent %d messages, want 2", len(api.sent))
 	}
-	if want := welcomeFor(subscribers.At(15, 0), true); api.sent[0].Text != want || !strings.Contains(want, "15:00") {
+	if want := welcomeFor(subscribers.At(15, 0), true, subscribers.Russian); api.sent[0].Text != want || !strings.Contains(want, "15:00") {
 		t.Fatalf("subscriber sees %q, want the hour 15:00 in %q", api.sent[0].Text, want)
 	}
-	if want := welcomeFor(0, false); api.sent[1].Text != want || strings.Contains(want, "00:00") {
+	if want := welcomeFor(0, false, subscribers.Russian); api.sent[1].Text != want || strings.Contains(want, "00:00") {
 		t.Fatalf("non-subscriber sees %q, want %q", api.sent[1].Text, want)
 	}
-	if welcomeFor(subscribers.At(15, 0), true) == welcomeFor(0, false) {
+	if welcomeFor(subscribers.At(15, 0), true, subscribers.Russian) == welcomeFor(0, false, subscribers.Russian) {
 		t.Fatal("the two states must read differently")
+	}
+}
+
+// languageButton returns the callback data and the label of the button that
+// switches the language.
+func languageButton(t *testing.T, markup any) (string, string) {
+	t.Helper()
+
+	for _, b := range buttons(t, markup) {
+		if strings.HasPrefix(b.CallbackData, callbackLanguagePrefix) {
+			return b.CallbackData, b.Text
+		}
+	}
+	t.Fatalf("no language button in %v", callbacks(t, markup))
+
+	return "", ""
+}
+
+// Pressing the switch in a private chat shows the menu in English and the
+// chat's daily post is in English; pressing it again goes back to Russian. The
+// choice survives a restart.
+func TestHandleLanguage_SwitchesMenuAndDailyPost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subscribers.json")
+	store := openStore(t, path, map[int64]int{10: 9})
+	api := &fakeAPI{}
+	menu := NewMenu(api, store, nil)
+	c, _ := New(api, nil, store)
+
+	menu.HandleStart(context.Background(), nil, startUpdate(10))
+	data, label := languageButton(t, api.sent[len(api.sent)-1].ReplyMarkup)
+	if label != "🇬🇧 English" {
+		t.Fatalf("button in a Russian chat is %q, want 🇬🇧 English", label)
+	}
+
+	api.sent = nil
+	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, data))
+	edit := onlyEdit(t, api)
+	if !strings.Contains(edit.Text, "Choose an action") || strings.Contains(edit.Text, "Выбери") {
+		t.Fatalf("menu after the switch is not in English: %q", edit.Text)
+	}
+	data, label = languageButton(t, edit.ReplyMarkup)
+	if label != "🇷🇺 Русский" {
+		t.Fatalf("button in an English chat is %q, want 🇷🇺 Русский", label)
+	}
+
+	if err := c.SendDue(context.Background(), at(11, 11, 0), question); err != nil {
+		t.Fatal(err)
+	}
+	post := api.sent[len(api.sent)-1].Text
+	if !strings.Contains(post, "Good luck") || strings.Contains(post, "Удачи") {
+		t.Fatalf("daily post of an English chat is not in English: %q", post)
+	}
+
+	restarted := openStore(t, path, nil)
+	if got := restarted.Language(10); got != subscribers.English {
+		t.Fatalf("language after a restart is %q, want %q", got, subscribers.English)
+	}
+
+	api.edited, api.answered, api.sent = nil, nil, nil
+	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, data))
+	edit = onlyEdit(t, api)
+	if !strings.Contains(edit.Text, "Выбери действие") {
+		t.Fatalf("menu after switching back is not in Russian: %q", edit.Text)
+	}
+	if _, label = languageButton(t, edit.ReplyMarkup); label != "🇬🇧 English" {
+		t.Fatalf("button after switching back is %q, want 🇬🇧 English", label)
+	}
+
+	if err := c.SendDue(context.Background(), at(12, 11, 0), question); err != nil {
+		t.Fatal(err)
+	}
+	if post := api.sent[len(api.sent)-1].Text; !strings.Contains(post, "Удачи") {
+		t.Fatalf("daily post after switching back is not in Russian: %q", post)
+	}
+}
+
+// The first /start of a chat sends the greeting and then the menu; the next
+// one sends only the menu.
+func TestHandleStart_GreetsOnlyOnTheFirstStart(t *testing.T) {
+	menu, api := newMenu(&fakeSubscribers{})
+
+	menu.HandleStart(context.Background(), nil, startUpdate(10))
+
+	if len(api.sent) != 2 {
+		t.Fatalf("first /start sent %d messages, want greeting and menu", len(api.sent))
+	}
+	if !strings.HasPrefix(api.sent[0].Text, "Привет! Я Daily LeetCode Ping.") || api.sent[0].ReplyMarkup != nil {
+		t.Fatalf("first message is not the plain greeting: %q", api.sent[0].Text)
+	}
+	if api.sent[1].Text != welcomeFor(0, false, subscribers.Russian) || api.sent[1].ReplyMarkup == nil {
+		t.Fatalf("second message is not the menu: %q", api.sent[1].Text)
+	}
+
+	api.sent = nil
+	menu.HandleStart(context.Background(), nil, startUpdate(10))
+
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(0, false, subscribers.Russian) {
+		t.Fatalf("second /start sent %+v, want only the menu", api.sent)
 	}
 }
