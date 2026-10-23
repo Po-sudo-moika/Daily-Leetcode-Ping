@@ -351,7 +351,7 @@ func (m *Menu) show(ctx context.Context, t target, s screen) {
 
 	switch {
 	case err == nil, isNotModified(err):
-		// Pressing a button that changes nothing (the same hour again) is fine.
+		// Pressing a button that changes nothing is fine.
 	case errors.Is(err, bot.ErrorBadRequest):
 		log.Infof("menu message %d of chat %d can't be edited, sending a new one: %v", t.messageID, t.chatID, err)
 		m.send(ctx, t.chatID, s)

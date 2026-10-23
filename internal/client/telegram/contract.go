@@ -52,7 +52,7 @@ type Subscribers interface {
 	// Drop unsubscribes a chat that cannot get the post any more. It is not
 	// a choice: Meet subscribes the chat again when it comes back.
 	Drop(chatID int64) (bool, error)
-	// Migrate moves a group's subscription and hour, or its Unsubscribe, to
+	// Migrate moves a group's subscription and time, or its Unsubscribe, to
 	// the new id Telegram gave it as a supergroup.
 	Migrate(from, to int64) (bool, error)
 	// Time returns the Moscow delivery time of a chat, in minutes since

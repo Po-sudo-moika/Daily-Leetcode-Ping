@@ -198,7 +198,7 @@ func (s *Store) Meet(chatID int64) (bool, error) {
 	return true, nil
 }
 
-// subscribe adds the chat at DefaultHour and forgets that it unsubscribed. A
+// subscribe adds the chat at DefaultTime and forgets that it unsubscribed. A
 // failed save leaves the store as it was. The caller holds s.mu.
 func (s *Store) subscribe(chatID int64) error {
 	wasOptedOut := s.optedOut[chatID]
@@ -264,7 +264,7 @@ func (s *Store) Drop(chatID int64) (bool, error) {
 }
 
 // Migrate moves a chat to its new id when Telegram turns a group into a
-// supergroup: its subscription and hour, or its Unsubscribe, and the day it
+// supergroup: its subscription and time, or its Unsubscribe, and the day it
 // last got the post. The old id is forgotten. It reports whether there was
 // anything to move. A failed save leaves the store as it was.
 func (s *Store) Migrate(from, to int64) (bool, error) {
