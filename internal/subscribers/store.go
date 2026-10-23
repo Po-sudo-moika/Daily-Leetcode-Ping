@@ -7,11 +7,12 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/jsonfile"
 )
 
 // A delivery time is a Moscow time of day, counted in minutes since midnight:
@@ -585,38 +586,5 @@ func (s *Store) save() error {
 		}
 	}
 
-	raw, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode subscribers: %w", err)
-	}
-
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create subscribers dir: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp subscribers file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write subscribers file: %w", err)
-	}
-	// Flush to disk before the rename, so a power loss cannot leave an empty file.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync subscribers file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close subscribers file: %w", err)
-	}
-
-	if err := os.Rename(tmp.Name(), s.path); err != nil {
-		return fmt.Errorf("replace subscribers file: %w", err)
-	}
-
-	return nil
+	return jsonfile.Write(s.path, data)
 }

@@ -6,7 +6,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-const DefaultSubscribersPath = "data/subscribers.json"
+const (
+	DefaultSubscribersPath = "data/subscribers.json"
+	DefaultLinksPath       = "data/leetcode-links.json"
+)
 
 type Config struct {
 	Service  Service
@@ -26,6 +29,7 @@ type Telegram struct {
 
 type Storage struct {
 	SubscribersPath string `toml:"subscribersPath"`
+	LinksPath       string `toml:"linksPath"`
 }
 
 // Load reads the config file and fills in defaults for optional fields.
@@ -38,6 +42,10 @@ func Load(path string) (Config, error) {
 
 	if conf.Storage.SubscribersPath == "" {
 		conf.Storage.SubscribersPath = DefaultSubscribersPath
+	}
+
+	if conf.Storage.LinksPath == "" {
+		conf.Storage.LinksPath = DefaultLinksPath
 	}
 
 	return conf, nil

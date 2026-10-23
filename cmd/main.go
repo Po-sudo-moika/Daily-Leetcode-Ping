@@ -13,6 +13,7 @@ import (
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/config"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/daily"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/links"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/robfig/cron/v3"
@@ -42,12 +43,17 @@ func main() {
 		log.Fatalf("error while opening subscribers store: %v", err)
 	}
 
+	linkStore, err := links.Open(conf.Storage.LinksPath)
+	if err != nil {
+		log.Fatalf("error while opening links store: %v", err)
+	}
+
 	moscowLoc, err := time.LoadLocation("Europe/Moscow")
 	if err != nil {
 		log.Fatal("Ошибка загрузки таймзоны:", err)
 	}
 
-	tgBot, err := bot.New(token, telegram.BotOptions(store)...)
+	tgBot, err := bot.New(token, telegram.BotOptions(store, linkStore)...)
 	if err != nil {
 		log.Fatalf("error while creating bot: %v", err)
 	}
@@ -57,7 +63,17 @@ func main() {
 
 	fixedChats := telegram.ResolveFixedChats(ctx, tgBot, conf.Telegram.TelegramChats)
 
-	menu := telegram.NewMenu(tgBot, store, fixedChats).WithOwner(ownerID)
+	// Commands written as /settings@<this bot> need the bot's username.
+	botUsername := ""
+	if me, err := tgBot.GetMe(ctx); err != nil {
+		log.Printf("error while asking for the bot's username, commands addressed to the bot by name are ignored: %v", err)
+	} else {
+		botUsername = me.Username
+	}
+
+	menu := telegram.NewMenu(tgBot, store, fixedChats).WithOwner(ownerID).
+		WithLeetCode(linkStore, leetcode.NewProfiles("https://leetcode.com")).
+		WithBotUsername(botUsername)
 	menu.Register(tgBot)
 
 	tgClient, err := telegram.New(tgBot, fixedChats, store)

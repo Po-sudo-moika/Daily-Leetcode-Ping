@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/links"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -77,4 +78,25 @@ type Subscribers interface {
 	LastDelivered(chat string) string
 	// MarkDelivered records that chat got the post on day.
 	MarkDelivered(chat, day string) error
+}
+
+// Links keeps the LeetCode username each person linked.
+type Links interface {
+	// Set links the user to a LeetCode username and records their @login.
+	Set(userID int64, login, leetcode string) error
+	// Touch refreshes the @login of a user who linked.
+	Touch(userID int64, login string) error
+	Get(userID int64) (links.Link, bool)
+	// ByLogin finds the link of the user with this Telegram @login, whatever
+	// its case.
+	ByLogin(login string) (links.Link, bool)
+	// Remove deletes the link of a user; false when there was none.
+	Remove(userID int64) (bool, error)
+}
+
+// LeetCode reads what LeetCode shows publicly about a user.
+type LeetCode interface {
+	// GetUserCalendar returns domain.ErrUserNotFound for a name LeetCode does
+	// not know.
+	GetUserCalendar(ctx context.Context, username string) (domain.Calendar, error)
 }
