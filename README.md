@@ -51,9 +51,9 @@ members who press buttons, so it has no such rule.
   carries the previous day's problem. The Back button on the minutes goes back
   to the hours.
 - **О проекте** — short description and a link to this repository.
-- **🇬🇧 English / 🇷🇺 Русский** — switch the chat to the other language. The
-  button is labelled in the language it switches to, and the menu is redrawn in
-  place.
+- **🌐 Язык / 🌐 Language** — opens a screen with two flag-only buttons, 🇷🇺
+  and 🇬🇧, and Back. A flag sets that language and returns to the menu, redrawn
+  in place in the new language. The button is labelled in the chat's language.
 
 ## LeetCode streak: `/leetcode` and `/show`
 

@@ -21,14 +21,16 @@ const (
 	callbackAbout       = "about"
 	callbackSettings    = "settings"
 	callbackMenu        = "menu"
+	// callbackLanguage opens the screen where the language is picked.
+	callbackLanguage = "language"
 	// callbackHourPrefix is followed by the Moscow hour, like "hour:9". It
 	// opens the minutes of that hour and saves nothing.
 	callbackHourPrefix = "hour:"
 	// callbackTimePrefix is followed by the delivery time in minutes since
 	// midnight, like "time:570" for 09:30. It saves the time.
 	callbackTimePrefix = "time:"
-	// callbackLanguagePrefix is followed by the language to switch to, like
-	// "lang:en". It saves the language.
+	// callbackLanguagePrefix is followed by the language to set, like "lang:en".
+	// It saves the language.
 	callbackLanguagePrefix = "lang:"
 
 	// RepositoryURL is the public code of the project.
@@ -103,16 +105,18 @@ var (
 	aboutButton       = message{ru: "ℹ️ О проекте", en: "ℹ️ About"}
 	backLabel         = message{ru: "⬅️ Назад", en: "⬅️ Back"}
 	codeButton        = message{ru: "📦 Код на GitHub", en: "📦 Code on GitHub"}
+	languageButton    = message{ru: "🌐 Язык", en: "🌐 Language"}
+	languageText      = message{ru: "🌐 Выбери язык", en: "🌐 Choose a language"}
 )
 
-// languageLabel is the label of the button that switches to lang. It is in
-// that language, so the person can read it whatever the chat speaks now.
-func languageLabel(lang subscribers.Language) string {
+// languageFlag is the flag-only label of the button that sets lang. A flag
+// needs no words, so the person can read it whatever the chat speaks now.
+func languageFlag(lang subscribers.Language) string {
 	if lang == subscribers.English {
-		return "🇬🇧 English"
+		return "🇬🇧"
 	}
 
-	return "🇷🇺 Русский"
+	return "🇷🇺"
 }
 
 // What people see in the bot's profile before they press Start. Telegram
@@ -192,6 +196,7 @@ func (m *Menu) Register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackAbout, bot.MatchTypeExact, m.HandleAbout)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackSettings, bot.MatchTypeExact, m.HandleSettings)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackMenu, bot.MatchTypeExact, m.HandleBack)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackLanguage, bot.MatchTypeExact, m.HandleLanguageScreen)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackHourPrefix, bot.MatchTypePrefix, m.HandleHour)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackTimePrefix, bot.MatchTypePrefix, m.HandleTime)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackLanguagePrefix, bot.MatchTypePrefix, m.HandleLanguage)
@@ -324,7 +329,18 @@ func (m *Menu) HandleSettings(ctx context.Context, _ *bot.Bot, update *models.Up
 	m.show(ctx, t, m.settingsScreen(t.chatID, ""))
 }
 
-// HandleBack returns from the about or settings screen to the menu.
+// HandleLanguageScreen opens the screen where the language is picked. Nothing
+// is saved until a flag is pressed.
+func (m *Menu) HandleLanguageScreen(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	t, ok := m.ackCallback(ctx, update, anyone)
+	if !ok {
+		return
+	}
+
+	m.show(ctx, t, languageScreen(m.subscribers.Language(t.chatID)))
+}
+
+// HandleBack returns from the about, settings or language screen to the menu.
 func (m *Menu) HandleBack(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	t, ok := m.ackCallback(ctx, update, anyone)
 	if !ok {
@@ -382,9 +398,9 @@ func (m *Menu) HandleTime(ctx context.Context, _ *bot.Bot, update *models.Update
 	}
 }
 
-// HandleLanguage saves the language of the pressed button for the chat and
-// shows the menu in it. The button names the language to switch to, so two
-// presses of the same button never switch back.
+// HandleLanguage saves the language of the pressed flag for the chat and shows
+// the menu in it. A flag names the language to set, so pressing the flag of the
+// current language just returns to the menu.
 func (m *Menu) HandleLanguage(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	t, ok := m.ackCallback(ctx, update, adminOnly)
 	if !ok {
@@ -394,6 +410,11 @@ func (m *Menu) HandleLanguage(ctx context.Context, _ *bot.Bot, update *models.Up
 	lang := subscribers.Language(strings.TrimPrefix(update.CallbackQuery.Data, callbackLanguagePrefix))
 	if lang != subscribers.Russian && lang != subscribers.English {
 		// A stale or made-up button: show the screen as it really is.
+		m.show(ctx, t, m.welcomeScreen(t.chatID))
+		return
+	}
+
+	if lang == m.subscribers.Language(t.chatID) {
 		m.show(ctx, t, m.welcomeScreen(t.chatID))
 		return
 	}
@@ -662,11 +683,8 @@ func backButton(lang subscribers.Language) models.InlineKeyboardButton {
 	return models.InlineKeyboardButton{Text: backLabel.in(lang), CallbackData: callbackMenu}
 }
 
-// mainScreen is the menu in lang. Its last button switches to the other
-// language and is labelled in it.
+// mainScreen is the menu in lang. Its last button opens the language screen.
 func mainScreen(text string, lang subscribers.Language) screen {
-	other := lang.Other()
-
 	return screen{
 		text: text,
 		markup: &models.InlineKeyboardMarkup{
@@ -680,8 +698,24 @@ func mainScreen(text string, lang subscribers.Language) screen {
 					{Text: aboutButton.in(lang), CallbackData: callbackAbout},
 				},
 				{
-					{Text: languageLabel(other), CallbackData: callbackLanguagePrefix + string(other)},
+					{Text: languageButton.in(lang), CallbackData: callbackLanguage},
 				},
+			},
+		},
+	}
+}
+
+// languageScreen offers the two languages as flag-only buttons, and Back.
+func languageScreen(lang subscribers.Language) screen {
+	return screen{
+		text: languageText.in(lang),
+		markup: &models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{
+				{
+					{Text: languageFlag(subscribers.Russian), CallbackData: callbackLanguagePrefix + string(subscribers.Russian)},
+					{Text: languageFlag(subscribers.English), CallbackData: callbackLanguagePrefix + string(subscribers.English)},
+				},
+				{backButton(lang)},
 			},
 		},
 	}

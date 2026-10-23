@@ -107,7 +107,7 @@ func TestHandleStart_ShowsWelcomeAndMenu(t *testing.T) {
 	}
 
 	got := callbacks(t, msg.ReplyMarkup)
-	want := []string{callbackSubscribe, callbackUnsubscribe, callbackSettings, callbackAbout, callbackLanguagePrefix + "en"}
+	want := []string{callbackSubscribe, callbackUnsubscribe, callbackSettings, callbackAbout, callbackLanguage}
 	if !slices.Equal(got, want) {
 		t.Fatalf("menu buttons %v, want %v", got, want)
 	}
@@ -807,46 +807,49 @@ func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
 	}
 }
 
-// languageButton returns the callback data and the label of the button that
-// switches the language.
-func languageButton(t *testing.T, markup any) (string, string) {
-	t.Helper()
+// The Language button opens a screen in the same menu message with two
+// flag-only buttons and Back; nothing is saved by opening it.
+func TestHandleLanguageScreen_ShowsTwoFlagsAndBack(t *testing.T) {
+	subs := subscribed(10)
+	menu, api := newMenu(subs)
 
-	for _, b := range buttons(t, markup) {
-		if strings.HasPrefix(b.CallbackData, callbackLanguagePrefix) {
-			return b.CallbackData, b.Text
-		}
+	menu.HandleLanguageScreen(context.Background(), nil, callbackUpdate(10, callbackLanguage))
+
+	edit := onlyEdit(t, api)
+	if edit.Text != languageText.in(subscribers.Russian) {
+		t.Fatalf("text %q, want %q", edit.Text, languageText.in(subscribers.Russian))
 	}
-	t.Fatalf("no language button in %v", callbacks(t, markup))
-
-	return "", ""
+	got := buttons(t, edit.ReplyMarkup)
+	want := []models.InlineKeyboardButton{
+		{Text: "🇷🇺", CallbackData: callbackLanguagePrefix + "ru"},
+		{Text: "🇬🇧", CallbackData: callbackLanguagePrefix + "en"},
+		backButton(subscribers.Russian),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("language screen buttons %+v, want %+v", got, want)
+	}
+	if subs.Language(10) != subscribers.Russian {
+		t.Fatalf("opening the screen changed the language to %q", subs.Language(10))
+	}
 }
 
-// Pressing the switch in a private chat shows the menu in English and the
-// chat's daily post is in English; pressing it again goes back to Russian. The
-// choice survives a restart.
-func TestHandleLanguage_SwitchesMenuAndDailyPost(t *testing.T) {
+// Pressing the English flag shows the menu in English and the chat's daily post
+// is in English; pressing the Russian flag goes back. The choice survives a
+// restart, and the flag of the current language just returns to the menu.
+func TestHandleLanguage_FlagSetsLanguageAndDailyPost(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "subscribers.json")
 	store := openStore(t, path, map[int64]int{10: 9})
 	api := &fakeAPI{}
 	menu := NewMenu(api, store, nil)
 	c, _ := New(api, nil, store)
 
-	menu.HandleStart(context.Background(), nil, startUpdate(10))
-	data, label := languageButton(t, api.sent[len(api.sent)-1].ReplyMarkup)
-	if label != "🇬🇧 English" {
-		t.Fatalf("button in a Russian chat is %q, want 🇬🇧 English", label)
-	}
-
-	api.sent = nil
-	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, data))
+	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, callbackLanguagePrefix+"en"))
 	edit := onlyEdit(t, api)
 	if !strings.Contains(edit.Text, "Choose an action") || strings.Contains(edit.Text, "Выбери") {
-		t.Fatalf("menu after the switch is not in English: %q", edit.Text)
+		t.Fatalf("menu after the flag is not in English: %q", edit.Text)
 	}
-	data, label = languageButton(t, edit.ReplyMarkup)
-	if label != "🇷🇺 Русский" {
-		t.Fatalf("button in an English chat is %q, want 🇷🇺 Русский", label)
+	if !slices.Contains(callbacks(t, edit.ReplyMarkup), callbackLanguage) {
+		t.Fatalf("menu in English has no Language button: %v", callbacks(t, edit.ReplyMarkup))
 	}
 
 	if err := c.SendDue(context.Background(), at(11, 11, 0), question); err != nil {
@@ -863,13 +866,15 @@ func TestHandleLanguage_SwitchesMenuAndDailyPost(t *testing.T) {
 	}
 
 	api.edited, api.answered, api.sent = nil, nil, nil
-	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, data))
-	edit = onlyEdit(t, api)
-	if !strings.Contains(edit.Text, "Выбери действие") {
-		t.Fatalf("menu after switching back is not in Russian: %q", edit.Text)
+	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, callbackLanguagePrefix+"en"))
+	if edit = onlyEdit(t, api); !strings.Contains(edit.Text, "Choose an action") {
+		t.Fatalf("the current flag must return to the menu in English: %q", edit.Text)
 	}
-	if _, label = languageButton(t, edit.ReplyMarkup); label != "🇬🇧 English" {
-		t.Fatalf("button after switching back is %q, want 🇬🇧 English", label)
+
+	api.edited, api.answered, api.sent = nil, nil, nil
+	menu.HandleLanguage(context.Background(), nil, callbackUpdate(10, callbackLanguagePrefix+"ru"))
+	if edit = onlyEdit(t, api); !strings.Contains(edit.Text, "Выбери действие") {
+		t.Fatalf("menu after the Russian flag is not in Russian: %q", edit.Text)
 	}
 
 	if err := c.SendDue(context.Background(), at(12, 11, 0), question); err != nil {
