@@ -53,7 +53,8 @@ func main() {
 		log.Fatal("Ошибка загрузки таймзоны:", err)
 	}
 
-	tgBot, err := bot.New(token, telegram.BotOptions(store, linkStore)...)
+	limits := telegram.NewLimits()
+	tgBot, err := bot.New(token, telegram.BotOptions(store, linkStore, limits)...)
 	if err != nil {
 		log.Fatalf("error while creating bot: %v", err)
 	}
@@ -72,8 +73,8 @@ func main() {
 	}
 
 	menu := telegram.NewMenu(tgBot, store, fixedChats).WithOwner(ownerID).
-		WithLeetCode(linkStore, leetcode.NewProfiles("https://leetcode.com")).
-		WithBotUsername(botUsername)
+		WithLeetCode(linkStore, leetcode.NewGuarded(leetcode.NewProfiles("https://leetcode.com"))).
+		WithBotUsername(botUsername).WithLimits(limits)
 	menu.Register(tgBot)
 
 	tgClient, err := telegram.New(tgBot, fixedChats, store)

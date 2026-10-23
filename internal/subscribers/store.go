@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/jsonfile"
+	"github.com/labstack/gommon/log"
 )
 
 // A delivery time is a Moscow time of day, counted in minutes since midnight:
@@ -73,6 +74,22 @@ const (
 
 // ErrNotSubscribed means the chat has no subscription.
 var ErrNotSubscribed = errors.New("chat is not subscribed")
+
+// MaxEntries is a high safety cap on each kind of record the store keeps: the
+// known chats (subscribed or not), the languages and the greetings. A real bot
+// stays far below it. Past it the store refuses a new entry with ErrFull, so a
+// flood of new chats cannot grow the file without bound.
+const MaxEntries = 50000
+
+// ErrFull means the store holds MaxEntries records of the kind and refuses a new one.
+var ErrFull = errors.New("subscribers store is full")
+
+// refuseNew logs a warning about a refused new entry and returns ErrFull.
+func refuseNew(kind string) error {
+	log.Warnf("subscribers store is full (%d %s): refusing a new entry", MaxEntries, kind)
+
+	return ErrFull
+}
 
 // Store keeps the subscribers, their delivery time, the chats that chose to
 // unsubscribe, the day each chat last got the post, each chat's language and
@@ -239,6 +256,9 @@ func (s *Store) Meet(chatID int64) (bool, error) {
 // failed save leaves the store as it was. The caller holds s.mu.
 func (s *Store) subscribe(chatID int64) error {
 	wasOptedOut := s.optedOut[chatID]
+	if !wasOptedOut && s.chatsFull() {
+		return refuseNew("chats")
+	}
 	s.chats[chatID] = DefaultTime
 	delete(s.optedOut, chatID)
 
@@ -253,6 +273,12 @@ func (s *Store) subscribe(chatID int64) error {
 	return nil
 }
 
+// chatsFull reports whether the known chats, subscribed or not, are at
+// MaxEntries. The caller holds s.mu.
+func (s *Store) chatsFull() bool {
+	return len(s.chats)+len(s.optedOut) >= MaxEntries
+}
+
 // Remove unsubscribes a chat because someone chose to, and remembers the
 // choice: Meet does not subscribe the chat again, also after a restart. It
 // reports whether the chat was subscribed.
@@ -263,6 +289,9 @@ func (s *Store) Remove(chatID int64) (bool, error) {
 	hour, wasSubscribed := s.chats[chatID]
 	if !wasSubscribed && s.optedOut[chatID] {
 		return false, nil
+	}
+	if !wasSubscribed && s.chatsFull() {
+		return false, refuseNew("chats")
 	}
 
 	delete(s.chats, chatID)
@@ -414,6 +443,9 @@ func (s *Store) SetLanguage(chatID int64, lang Language) error {
 	defer s.mu.Unlock()
 
 	old, hadOld := s.languages[chatID]
+	if lang == English && !hadOld && len(s.languages) >= MaxEntries {
+		return refuseNew("languages")
+	}
 	if lang == Russian {
 		delete(s.languages, chatID)
 	} else {
@@ -448,6 +480,9 @@ func (s *Store) MarkGreeted(chatID int64) error {
 
 	if s.greeted[chatID] {
 		return nil
+	}
+	if len(s.greeted) >= MaxEntries {
+		return refuseNew("greetings")
 	}
 
 	s.greeted[chatID] = true

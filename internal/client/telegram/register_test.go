@@ -22,7 +22,7 @@ func newRegisteredBot(t *testing.T, subs Subscribers, fixedChats ...string) (*bo
 func newRegisteredBotWithOwner(t *testing.T, subs Subscribers, ownerID int64, fixedChats ...string) (*bot.Bot, *fakeAPI) {
 	t.Helper()
 
-	options := append(BotOptions(subs, nil), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
+	options := append(BotOptions(subs, nil, nil), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	b, err := bot.New("123456:fake-token-for-tests", options...)
 	if err != nil {
 		t.Fatal(err)

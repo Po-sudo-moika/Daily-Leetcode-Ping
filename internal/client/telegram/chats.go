@@ -19,17 +19,23 @@ var AllowedUpdates = bot.AllowedUpdates{
 }
 
 // BotOptions are the options that make the bot follow the chats it is in:
-// the updates it asks for, the middleware that subscribes every chat it meets
-// for the first time, and the one that keeps the @login of every person who
-// linked LeetCode up to date. links may be nil.
-func BotOptions(subscribers Subscribers, links Links) []bot.Option {
-	middlewares := []bot.Middleware{meetChats(subscribers)}
+// the updates it asks for, the middleware that drops abuse (see guardUpdates),
+// the one that subscribes every chat it meets for the first time, and the one
+// that keeps the @login of every person who linked LeetCode up to date. They
+// also bound the work: the bot handles at most handlerWorkers updates at the
+// same time, in its worker goroutines, instead of one new goroutine per update,
+// and the updates that wait are held by Telegram. links and limits may be nil;
+// without limits nothing is rate limited.
+func BotOptions(subscribers Subscribers, links Links, limits *Limits) []bot.Option {
+	middlewares := []bot.Middleware{guardUpdates(limits, subscribers), meetChats(subscribers)}
 	if links != nil {
 		middlewares = append(middlewares, refreshLogins(links))
 	}
 
 	return []bot.Option{
 		bot.WithAllowedUpdates(AllowedUpdates),
+		bot.WithNotAsyncHandlers(),
+		bot.WithWorkers(handlerWorkers),
 		bot.WithMiddlewares(middlewares...),
 	}
 }

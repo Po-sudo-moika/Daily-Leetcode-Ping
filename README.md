@@ -94,6 +94,13 @@ written as `/command@<bot username>`, in groups and private chats. A command
 addressed to another bot (`/settings@OtherBot`) is ignored. The bot asks
 Telegram for its own username at start-up.
 
+## Abuse protection
+
+The bot limits how many commands and button presses one user or group can send,
+how often it asks LeetCode, how long a command may be, and how many chats and
+links it stores. The list of possible attacks and the defence for each one is
+in [docs/security.md](docs/security.md).
+
 ## Language and greeting
 
 Each chat has a language, Russian or English, and every chat starts in

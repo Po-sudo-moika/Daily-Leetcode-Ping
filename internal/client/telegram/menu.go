@@ -163,6 +163,8 @@ type Menu struct {
 	botUsername string
 	// now is the clock of /show.
 	now func() time.Time
+	// limits limits the LeetCode lookups of a user; nil limits nothing.
+	limits *Limits
 }
 
 // NewMenu returns the menu. fixedChats are the chats from config.toml, as
@@ -175,6 +177,19 @@ func NewMenu(api API, subscribers Subscribers, fixedChats []string) *Menu {
 // /chats answers. It returns the menu.
 func (m *Menu) WithOwner(userID int64) *Menu {
 	m.ownerID = userID
+
+	return m
+}
+
+// WithLimits turns on the lookup limit of /leetcode and /show, and lets limits
+// send its notices through this menu's API. Give the same limits to BotOptions.
+// It returns the menu.
+func (m *Menu) WithLimits(limits *Limits) *Menu {
+	m.limits = limits
+	if limits != nil {
+		limits.api = m.api
+		limits.forBot = m.isForBot
+	}
 
 	return m
 }
