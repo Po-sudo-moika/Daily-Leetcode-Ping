@@ -71,16 +71,6 @@ const (
 	English Language = "en"
 )
 
-// Other returns the language a chat switches to: English for Russian and
-// Russian for anything else.
-func (l Language) Other() Language {
-	if l == Russian {
-		return English
-	}
-
-	return Russian
-}
-
 // ErrNotSubscribed means the chat has no subscription.
 var ErrNotSubscribed = errors.New("chat is not subscribed")
 
