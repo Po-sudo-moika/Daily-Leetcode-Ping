@@ -122,9 +122,11 @@ name or title (asked from Telegram when you ask), the type (private chat,
 group, supergroup, channel), the delivery time, whether the chat is subscribed,
 and the last day it got the post. Listed are the subscribed chats, the chats
 that pressed Unsubscribe and the chats from `telegramChats`. A chat Telegram
-cannot find, such as a dead fixed chat, is listed with a warning. A chat the
-bot was removed from is forgotten and is not listed. A long list is split
-across messages.
+cannot find, such as a dead fixed chat, is listed with a warning. A subscribed
+chat the bot was removed from is forgotten and is not listed, unless it is in
+`telegramChats`. A chat that pressed Unsubscribe stays listed, as
+unsubscribed, even after the bot is removed, because the bot keeps that
+choice. A long list is split across messages.
 
 ## Run
 

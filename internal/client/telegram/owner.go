@@ -20,8 +20,10 @@ const maxMessageRunes = 4000
 // HandleChats lists every chat the bot knows to its owner, and answers nobody
 // else. The list goes to the owner's private chat, whichever chat the command
 // came from, so a group never sees it. It takes the subscribed chats, the ones
-// that pressed Unsubscribe and the fixed chats from config.toml; a chat the bot
-// was removed from is forgotten and is not listed.
+// that pressed Unsubscribe and the fixed chats from config.toml. A subscribed
+// chat the bot was removed from is forgotten and is not listed, unless it is a
+// fixed chat. A chat that pressed Unsubscribe stays listed, as unsubscribed,
+// even after the bot is removed, because the store keeps that choice.
 func (m *Menu) HandleChats(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	msg := update.Message
 	if msg == nil || m.ownerID == 0 || msg.From == nil || msg.From.ID != m.ownerID {
