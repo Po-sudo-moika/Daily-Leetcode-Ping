@@ -9,7 +9,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
@@ -900,5 +902,67 @@ func TestHandleStart_GreetsOnlyOnTheFirstStart(t *testing.T) {
 
 	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(0, false, subscribers.Russian) {
 		t.Fatalf("second /start sent %+v, want only the menu", api.sent)
+	}
+}
+
+// heldHelloAPI holds the first message it is asked to send until release is
+// closed, so a second /start can arrive while the hello is on its way.
+type heldHelloAPI struct {
+	*fakeAPI
+	once    sync.Once
+	sending chan struct{}
+	release chan struct{}
+}
+
+func (a *heldHelloAPI) SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
+	a.once.Do(func() {
+		close(a.sending)
+		<-a.release
+	})
+
+	return a.fakeAPI.SendMessage(ctx, params)
+}
+
+// Two /start from a new chat that arrive together, as after a double tap or in
+// one batch after downtime, run at the same time. The chat still gets the
+// hello once, before the menus.
+func TestHandleStart_TwoStartsTogetherGreetOnce(t *testing.T) {
+	store, err := subscribers.Open(filepath.Join(t.TempDir(), "subscribers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &heldHelloAPI{fakeAPI: &fakeAPI{}, sending: make(chan struct{}), release: make(chan struct{})}
+	menu := NewMenu(api, store, nil)
+
+	var wg sync.WaitGroup
+	start := func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			menu.HandleStart(context.Background(), nil, startUpdate(10))
+		}()
+	}
+	start()
+	<-api.sending
+	start()
+	// Give the second /start time to reach the greeting while the hello is
+	// still held.
+	time.Sleep(50 * time.Millisecond)
+	close(api.release)
+	wg.Wait()
+
+	if len(api.sent) != 3 {
+		t.Fatalf("two /start sent %d messages, want one greeting and two menus", len(api.sent))
+	}
+	if !strings.HasPrefix(api.sent[0].Text, "Привет! Я Daily LeetCode Ping.") {
+		t.Fatalf("first message is not the greeting: %q", api.sent[0].Text)
+	}
+	for _, p := range api.sent[1:] {
+		if p.Text != welcomeFor(0, false, subscribers.Russian) {
+			t.Fatalf("message after the greeting is not the menu: %q", p.Text)
+		}
+	}
+	if !store.Greeted(10) {
+		t.Fatal("the chat is not recorded as greeted")
 	}
 }

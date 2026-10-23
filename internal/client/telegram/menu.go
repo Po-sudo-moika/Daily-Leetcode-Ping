@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
@@ -144,6 +145,10 @@ type Menu struct {
 	// ownerID is the Telegram user id of the bot's owner; 0 means /chats
 	// answers nobody.
 	ownerID int64
+	// greetMu makes checking, sending and recording the hello one step. The
+	// bot runs handlers at the same time, so two /start from a new chat that
+	// arrive together would otherwise both send it.
+	greetMu sync.Mutex
 }
 
 // NewMenu returns the menu. fixedChats are the chats from config.toml, as
@@ -218,6 +223,9 @@ func (m *Menu) HandleStart(ctx context.Context, _ *bot.Bot, update *models.Updat
 // has. A hello that could not be sent is not recorded, so the next /start tries
 // again.
 func (m *Menu) greet(ctx context.Context, chatID int64) {
+	m.greetMu.Lock()
+	defer m.greetMu.Unlock()
+
 	if m.subscribers.Greeted(chatID) {
 		return
 	}
