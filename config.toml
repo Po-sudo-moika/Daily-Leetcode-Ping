@@ -15,3 +15,5 @@ telegramChats = [
 [storage]
 # Where subscriptions are kept. Mount this folder as a Docker volume.
 subscribersPath = "data/subscribers.json"
+# Where the LeetCode usernames people linked are kept (same folder).
+linksPath = "data/leetcode-links.json"

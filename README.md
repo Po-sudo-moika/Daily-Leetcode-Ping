@@ -5,7 +5,8 @@ The bot posts the LeetCode daily problem once at start-up and then every day.
 Anyone can open the bot, press Start (or send `/start`) and use the menu. The
 menu is one message: every button edits it in place, and About and Settings
 open as screens inside it, each with a Back button. At start-up the bot also
-sets its description and its command list (`/start`, `/settings`).
+sets its description and its command list (`/start`, `/settings`, `/leetcode`,
+`/show`).
 
 ## Who gets the post
 
@@ -53,6 +54,45 @@ members who press buttons, so it has no such rule.
 - **🇬🇧 English / 🇷🇺 Русский** — switch the chat to the other language. The
   button is labelled in the language it switches to, and the menu is redrawn in
   place.
+
+## LeetCode streak: `/leetcode` and `/show`
+
+A person can link their LeetCode username to the bot, and then anyone can ask
+for their streak.
+
+- **Link** — in a **private chat** with the bot, send `/leetcode <username>`.
+  A profile link such as `https://leetcode.com/u/<username>/` works too. The
+  bot first asks LeetCode whether it knows the name; if not, it says so and
+  saves nothing. `/leetcode` with no name shows the linked username, or how to
+  link. The private menu has a **LeetCode** button with the same screen and a
+  button that removes the link. In a group, `/leetcode` only says
+  that linking works in a private chat.
+- **Show** — in **any chat**, `/show @login` answers with the person's LeetCode
+  username, their current streak and their best streak. The login is their
+  Telegram @login and its case does not matter. If that person has not linked,
+  the bot says so; `/show` alone says how to use it; if LeetCode does not
+  answer, the bot asks to try again later.
+- **How the streak is counted** — from the public submission calendar of the
+  LeetCode profile, no login needed. The current streak is the number of UTC
+  days in a row, up to today, with at least one submission; a streak that ended
+  yesterday still counts until today ends. The best streak is the one LeetCode
+  reports for the calendar's period.
+- **What is stored** — for each person who linked: their Telegram user id, their
+  Telegram @login as last seen and their LeetCode username, in
+  `storage.linksPath` (default `data/leetcode-links.json`), saved the same safe
+  way as the subscribers file. The @login is refreshed whenever the person
+  writes to the bot. The bot never asks for or stores a LeetCode password,
+  token or cookie.
+- **Privacy** — once a person links, anyone who knows their Telegram @login can
+  see their LeetCode username and streak with `/show`. Remove the link with the
+  button on the LeetCode screen.
+
+## Commands
+
+`/start`, `/settings`, `/chats`, `/leetcode` and `/show` also work when
+written as `/command@<bot username>`, in groups and private chats. A command
+addressed to another bot (`/settings@OtherBot`) is ignored. The bot asks
+Telegram for its own username at start-up.
 
 ## Language and greeting
 
@@ -127,6 +167,8 @@ never commit it. The token is not part of `config.toml`.
   chat (kept for 90 days), the chats switched to English (`languages`) and
   the chats that got the hello (`greeted`). A file from an earlier version loads as is: every
   chat keeps its hour, at `:00`.
+- `storage.linksPath` — where the linked LeetCode usernames are saved
+  (default `data/leetcode-links.json`, in the same ignored `data/` folder).
 
 ### Owner and `/chats`
 
@@ -168,6 +210,8 @@ docker run --env-file .env -v leetcode-ping-data:/app/data leetcode-ping
 
 - `--env-file .env` passes the token into the container (the file itself is not
   copied into the image).
-- `-v leetcode-ping-data:/app/data` keeps `data/subscribers.json` in a Docker
-  volume, so subscriptions survive when the container is replaced. If you change
-  `storage.subscribersPath`, mount the folder of the new path instead.
+- `-v leetcode-ping-data:/app/data` keeps `data/subscribers.json` and
+  `data/leetcode-links.json` in a Docker volume, so subscriptions and links
+  survive when the container is replaced. If you change
+  `storage.subscribersPath` or `storage.linksPath`, mount the folder of the new
+  path instead.

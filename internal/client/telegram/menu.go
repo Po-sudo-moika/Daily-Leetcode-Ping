@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
@@ -149,12 +150,21 @@ type Menu struct {
 	// bot runs handlers at the same time, so two /start from a new chat that
 	// arrive together would otherwise both send it.
 	greetMu sync.Mutex
+
+	// links and leetcode are set by WithLeetCode; without them there are no
+	// /leetcode and /show.
+	links    Links
+	leetcode LeetCode
+	// botUsername is the @username of this bot, without the "@".
+	botUsername string
+	// now is the clock of /show.
+	now func() time.Time
 }
 
 // NewMenu returns the menu. fixedChats are the chats from config.toml, as
 // ResolveFixedChats returns them.
 func NewMenu(api API, subscribers Subscribers, fixedChats []string) *Menu {
-	return &Menu{api: api, subscribers: subscribers, fixedChats: fixedChats}
+	return &Menu{api: api, subscribers: subscribers, fixedChats: fixedChats, now: time.Now}
 }
 
 // WithOwner sets the Telegram user id of the bot's owner, the only person
@@ -168,9 +178,15 @@ func (m *Menu) WithOwner(userID int64) *Menu {
 // Register wires the menu handlers into the bot.
 func (m *Menu) Register(b *bot.Bot) {
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return update.MyChatMember != nil }, m.HandleMyChatMember)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommandStartOnly, m.HandleStart)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "settings", bot.MatchTypeCommandStartOnly, m.HandleSettingsCommand)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "chats", bot.MatchTypeCommandStartOnly, m.HandleChats)
+	b.RegisterHandlerMatchFunc(m.isCommand("start"), m.HandleStart)
+	b.RegisterHandlerMatchFunc(m.isCommand("settings"), m.HandleSettingsCommand)
+	b.RegisterHandlerMatchFunc(m.isCommand("chats"), m.HandleChats)
+	if m.links != nil && m.leetcode != nil {
+		b.RegisterHandlerMatchFunc(m.isCommand("leetcode"), m.HandleLeetcode)
+		b.RegisterHandlerMatchFunc(m.isCommand("show"), m.HandleShow)
+		b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackLeetcode, bot.MatchTypeExact, m.HandleLeetcodeScreen)
+		b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackUnlink, bot.MatchTypeExact, m.HandleUnlink)
+	}
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackSubscribe, bot.MatchTypeExact, m.HandleSubscribe)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackUnsubscribe, bot.MatchTypeExact, m.HandleUnsubscribe)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackAbout, bot.MatchTypeExact, m.HandleAbout)
@@ -190,6 +206,8 @@ func (m *Menu) Setup(ctx context.Context) error {
 	_, err := m.api.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: []models.BotCommand{
 		{Command: "start", Description: "Открыть меню"},
 		{Command: "settings", Description: "Настройки: время рассылки"},
+		{Command: "leetcode", Description: "Привязать свой LeetCode"},
+		{Command: "show", Description: "Серия человека: /show @логин"},
 	}})
 	if err != nil {
 		errs = append(errs, fmt.Errorf("set commands: %w", err))
@@ -260,12 +278,12 @@ func (m *Menu) HandleSubscribe(ctx context.Context, _ *bot.Bot, update *models.U
 	lang := m.subscribers.Language(t.chatID)
 	if _, err := m.subscribers.Add(t.chatID); err != nil {
 		log.Errorf("error while changing subscription of %d: %v", t.chatID, err)
-		m.show(ctx, t, mainScreen(saveFailedText.in(lang), lang))
+		m.show(ctx, t, m.mainMenu(t.chatID, saveFailedText.in(lang), lang))
 		return
 	}
 
 	at, _ := m.subscribers.Time(t.chatID)
-	m.show(ctx, t, mainScreen(subscribedText(at, lang), lang))
+	m.show(ctx, t, m.mainMenu(t.chatID, subscribedText(at, lang), lang))
 }
 
 func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -277,7 +295,7 @@ func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models
 	lang := m.subscribers.Language(t.chatID)
 	if _, err := m.subscribers.Remove(t.chatID); err != nil {
 		log.Errorf("error while changing subscription of %d: %v", t.chatID, err)
-		m.show(ctx, t, mainScreen(saveFailedText.in(lang), lang))
+		m.show(ctx, t, m.mainMenu(t.chatID, saveFailedText.in(lang), lang))
 		return
 	}
 
@@ -285,7 +303,7 @@ func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models
 	if m.isFixed(t.chatID) {
 		text = fixedStatus(lang)
 	}
-	m.show(ctx, t, mainScreen(text, lang))
+	m.show(ctx, t, m.mainMenu(t.chatID, text, lang))
 }
 
 func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -383,7 +401,7 @@ func (m *Menu) HandleLanguage(ctx context.Context, _ *bot.Bot, update *models.Up
 	if err := m.subscribers.SetLanguage(t.chatID, lang); err != nil {
 		log.Errorf("error while saving language of %d: %v", t.chatID, err)
 		current := m.subscribers.Language(t.chatID)
-		m.show(ctx, t, mainScreen(saveFailedText.in(current), current))
+		m.show(ctx, t, m.mainMenu(t.chatID, saveFailedText.in(current), current))
 		return
 	}
 
@@ -582,10 +600,10 @@ func (m *Menu) welcomeScreen(chatID int64) screen {
 	lang := m.subscribers.Language(chatID)
 	at, subscribed := m.subscribers.Time(chatID)
 	if !subscribed && m.isFixed(chatID) {
-		return mainScreen(welcomeWith(fixedStatus(lang), lang), lang)
+		return m.mainMenu(chatID, welcomeWith(fixedStatus(lang), lang), lang)
 	}
 
-	return mainScreen(welcomeFor(at, subscribed, lang), lang)
+	return m.mainMenu(chatID, welcomeFor(at, subscribed, lang), lang)
 }
 
 // isFixed reports whether the chat is one of the chats from config.toml.

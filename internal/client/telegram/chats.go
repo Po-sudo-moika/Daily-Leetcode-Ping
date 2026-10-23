@@ -19,12 +19,18 @@ var AllowedUpdates = bot.AllowedUpdates{
 }
 
 // BotOptions are the options that make the bot follow the chats it is in:
-// the updates it asks for, and the middleware that subscribes every chat it
-// meets for the first time.
-func BotOptions(subscribers Subscribers) []bot.Option {
+// the updates it asks for, the middleware that subscribes every chat it meets
+// for the first time, and the one that keeps the @login of every person who
+// linked LeetCode up to date. links may be nil.
+func BotOptions(subscribers Subscribers, links Links) []bot.Option {
+	middlewares := []bot.Middleware{meetChats(subscribers)}
+	if links != nil {
+		middlewares = append(middlewares, refreshLogins(links))
+	}
+
 	return []bot.Option{
 		bot.WithAllowedUpdates(AllowedUpdates),
-		bot.WithMiddlewares(meetChats(subscribers)),
+		bot.WithMiddlewares(middlewares...),
 	}
 }
 
@@ -54,6 +60,31 @@ func meetChats(subscribers Subscribers) bot.Middleware {
 					log.Errorf("error while subscribing new chat %d: %v", chat.ID, err)
 				case met:
 					log.Infof("new chat %d subscribed on first contact", chat.ID)
+				}
+			}
+
+			next(ctx, b, update)
+		}
+	}
+}
+
+// refreshLogins records the current @login of whoever writes to the bot or
+// presses a button, when they linked LeetCode, so a changed Telegram name is
+// picked up. A failed save is logged and the update goes on.
+func refreshLogins(links Links) bot.Middleware {
+	return func(next bot.HandlerFunc) bot.HandlerFunc {
+		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			var from *models.User
+			switch {
+			case update.Message != nil:
+				from = update.Message.From
+			case update.CallbackQuery != nil:
+				from = &update.CallbackQuery.From
+			}
+
+			if from != nil {
+				if err := links.Touch(from.ID, from.Username); err != nil {
+					log.Errorf("error while refreshing the login of user %d: %v", from.ID, err)
 				}
 			}
 
