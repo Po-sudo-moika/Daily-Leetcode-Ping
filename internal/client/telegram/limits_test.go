@@ -95,3 +95,69 @@ func TestLookups_SameUserTwiceMakesOneCallAndInvalidNameNone(t *testing.T) {
 		t.Fatalf("an invalid username reached LeetCode: %v", lc.asked)
 	}
 }
+
+func TestRateLimit_IgnoresCommandsForOtherBots(t *testing.T) {
+	ctx := context.Background()
+	subs := subscribed(10)
+
+	limits := NewLimits()
+	now := time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC)
+	limits.now = func() time.Time { return now }
+
+	b, err := bot.New("123456:fake-token-for-tests", append(BotOptions(subs, nil, limits), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{}
+	NewMenu(api, subs, nil).WithBotUsername(botName).WithLimits(limits).Register(b)
+
+	for range userBurst + 5 {
+		b.ProcessUpdate(ctx, textUpdate(10, models.ChatTypePrivate, 10, "", "/settings@OtherBot"))
+	}
+	b.ProcessUpdate(ctx, textUpdate(10, models.ChatTypePrivate, 10, "", "/settings@"+botName))
+
+	if len(api.sent) != 1 || api.sent[0].Text == tooManyText.in(subscribers.Russian) {
+		t.Fatalf("got messages %+v, want only the answer to this bot's command", api.sent)
+	}
+}
+
+func TestLookups_TooManySaysSoOnce(t *testing.T) {
+	ctx := context.Background()
+	subs := subscribed()
+
+	store, err := links.Open(filepath.Join(t.TempDir(), "links.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(10, "alice_tg", "Alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	limits := NewLimits()
+	now := time.Date(2026, 1, 3, 12, 0, 0, 0, time.UTC)
+	limits.now = func() time.Time { return now }
+
+	lc := &fakeLeetCode{calendars: map[string]domain.Calendar{"Alice": {Username: "Alice"}}}
+	b, err := bot.New("123456:fake-token-for-tests", append(BotOptions(subs, store, limits), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{}
+	menu := NewMenu(api, subs, nil).WithLeetCode(store, leetcode.NewGuarded(lc)).WithBotUsername(botName).WithLimits(limits)
+	menu.now = func() time.Time { return now }
+	menu.Register(b)
+
+	for range lookupBurst + 3 {
+		b.ProcessUpdate(ctx, textUpdate(20, models.ChatTypePrivate, 20, "bob_tg", "/show @alice_tg"))
+	}
+
+	notices := 0
+	for _, m := range api.sent {
+		if m.Text == tooManyLookupsText.in(subscribers.Russian) {
+			notices++
+		}
+	}
+	if len(api.sent) != lookupBurst+1 || notices != 1 {
+		t.Fatalf("got %d messages with %d notices, want %d answers and one notice", len(api.sent), notices, lookupBurst)
+	}
+}

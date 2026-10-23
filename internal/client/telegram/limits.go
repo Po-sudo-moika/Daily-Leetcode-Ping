@@ -127,8 +127,11 @@ type Limits struct {
 	lookups *limiter
 	now     func() time.Time
 
-	// api sends the notices; Menu.WithLimits sets it before the bot starts.
-	api API
+	// api sends the notices, and forBot tells whether a command is addressed to
+	// this bot; Menu.WithLimits sets both before the bot starts. With no forBot,
+	// every command counts.
+	api    API
+	forBot func(*models.Message) bool
 }
 
 // NewLimits returns the limits with the default numbers.
@@ -141,16 +144,15 @@ func NewLimits() *Limits {
 	}
 }
 
-// allowLookup reports whether the user may ask LeetCode now. Nil limits allow
-// everything.
-func (l *Limits) allowLookup(userID int64) bool {
+// allowLookup reports whether the user may ask LeetCode now. Without a lookup,
+// notify is true at most once in noticeWindow, so the caller tells the user
+// once. Nil limits allow everything.
+func (l *Limits) allowLookup(userID int64) (ok, notify bool) {
 	if l == nil {
-		return true
+		return true, false
 	}
 
-	ok, _ := l.lookups.allow(userID, l.now())
-
-	return ok
+	return l.lookups.allow(userID, l.now())
 }
 
 // guardUpdates is the first middleware. It drops a command that is too long,
@@ -186,7 +188,7 @@ func isTooLong(update *models.Update) bool {
 
 // admit counts the update against the limits and reports whether it may go on.
 func (l *Limits) admit(ctx context.Context, update *models.Update, subscribers Subscribers) bool {
-	userID, chatID, ok := actionOf(update)
+	userID, chatID, ok := l.actionOf(update)
 	if !ok {
 		return true
 	}
@@ -211,11 +213,15 @@ func (l *Limits) admit(ctx context.Context, update *models.Update, subscribers S
 	return true
 }
 
-// actionOf returns the user and the chat of a command or a button press. ok is
-// false for any other update.
-func actionOf(update *models.Update) (userID, chatID int64, ok bool) {
+// actionOf returns the user and the chat of a command to this bot or of a button
+// press. ok is false for any other update, such as a command to another bot.
+func (l *Limits) actionOf(update *models.Update) (userID, chatID int64, ok bool) {
 	switch {
 	case update.Message != nil && strings.HasPrefix(update.Message.Text, "/"):
+		if l.forBot != nil && !l.forBot(update.Message) {
+			return 0, 0, false
+		}
+
 		if from := update.Message.From; from != nil {
 			userID = from.ID
 		}

@@ -133,9 +133,10 @@ func (g *Guarded) keep(key string, c cached) {
 }
 
 // acquire waits for a place among the running calls and for the turn in the
-// one-call-a-second line, and returns ErrBusy when that takes longer than
-// maxWait. The caller releases the place with <-g.slots.
+// one-call-a-second line, and returns ErrBusy when both together take longer
+// than maxWait. The caller releases the place with <-g.slots.
 func (g *Guarded) acquire(ctx context.Context) error {
+	start := time.Now()
 	timeout := time.NewTimer(maxWait)
 	defer timeout.Stop()
 
@@ -147,7 +148,7 @@ func (g *Guarded) acquire(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	wait, ok := g.reserve()
+	wait, ok := g.reserve(maxWait - time.Since(start))
 	if !ok {
 		<-g.slots
 		return ErrBusy
@@ -169,8 +170,8 @@ func (g *Guarded) acquire(ctx context.Context) error {
 }
 
 // reserve books the next turn and returns how long to wait for it. It reports
-// false, booking nothing, when the turn is more than maxWait away.
-func (g *Guarded) reserve() (time.Duration, bool) {
+// false, booking nothing, when the turn is more than budget away.
+func (g *Guarded) reserve(budget time.Duration) (time.Duration, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -179,7 +180,7 @@ func (g *Guarded) reserve() (time.Duration, bool) {
 	if at.Before(now) {
 		at = now
 	}
-	if at.Sub(now) > maxWait {
+	if at.Sub(now) > budget {
 		return 0, false
 	}
 

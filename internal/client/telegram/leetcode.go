@@ -282,14 +282,18 @@ func (m *Menu) HandleShow(ctx context.Context, _ *bot.Bot, update *models.Update
 	m.sendText(ctx, chatID, showText(link.LeetCode, calendar.CurrentStreak(m.now()), calendar.BestStreak, lang))
 }
 
-// allowLookup reports whether the user may ask LeetCode now, and tells them in
-// chatID when not. The limit counts a lookup even when the answer is cached.
+// allowLookup reports whether the user may ask LeetCode now, and when not tells
+// them in chatID, at most once in noticeWindow. The limit counts a lookup even
+// when the answer is cached.
 func (m *Menu) allowLookup(ctx context.Context, chatID, userID int64, lang subscribers.Language) bool {
-	if m.limits.allowLookup(userID) {
+	ok, notify := m.limits.allowLookup(userID)
+	if ok {
 		return true
 	}
 
-	m.sendText(ctx, chatID, tooManyLookupsText.in(lang))
+	if notify {
+		m.sendText(ctx, chatID, tooManyLookupsText.in(lang))
+	}
 
 	return false
 }

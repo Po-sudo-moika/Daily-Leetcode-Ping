@@ -36,11 +36,16 @@ func (m *Menu) isCommand(name string) bot.MatchFunc {
 		}
 
 		command, _ := splitCommand(update.Message)
-		command, addressee, addressed := strings.Cut(command, "@")
-		if command != name {
-			return false
-		}
 
-		return !addressed || (m.botUsername != "" && strings.EqualFold(addressee, m.botUsername))
+		return strings.Split(command, "@")[0] == name && m.isForBot(update.Message)
 	}
+}
+
+// isForBot reports whether the command at the start of msg is addressed to this
+// bot: written with no @, or as /name@<this bot's username>.
+func (m *Menu) isForBot(msg *models.Message) bool {
+	command, _ := splitCommand(msg)
+	_, addressee, addressed := strings.Cut(command, "@")
+
+	return !addressed || (m.botUsername != "" && strings.EqualFold(addressee, m.botUsername))
 }

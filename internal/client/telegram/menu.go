@@ -188,6 +188,7 @@ func (m *Menu) WithLimits(limits *Limits) *Menu {
 	m.limits = limits
 	if limits != nil {
 		limits.api = m.api
+		limits.forBot = m.isForBot
 	}
 
 	return m
