@@ -12,16 +12,17 @@ import (
 // Client posts the daily question.
 type Client interface {
 	// SendToFixedChats posts only to the chats from config.toml. Once a
-	// chat's delivery hour has come at now, a Moscow time, the post counts as
+	// chat's delivery time has come at now, a Moscow time, the post counts as
 	// its delivery for the day, so the next round does not repeat it. That
-	// hour is the one it chose when it is also a subscriber, 11:00 otherwise.
+	// time is the one it chose when it is also a subscriber, 11:00 otherwise.
 	SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error
 	// HasDue reports whether anyone is due for today's post at now, a Moscow
-	// time: their delivery hour has come and they have not got the post today.
+	// time: their delivery time has come, they have not got the post today and
+	// no send to them failed earlier in the same clock hour.
 	HasDue(now time.Time) bool
 	// SendDue posts to everyone due at now, a Moscow time: the subscribers
-	// whose chosen hour has come, and the chats from config.toml once their
-	// fixed hour has come. It records each successful delivery.
+	// whose chosen time has come, and the chats from config.toml once their
+	// fixed time has come. It records each successful delivery.
 	SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error
 }
 
@@ -34,6 +35,7 @@ type API interface {
 	SetMyDescription(ctx context.Context, params *bot.SetMyDescriptionParams) (bool, error)
 	SetMyShortDescription(ctx context.Context, params *bot.SetMyShortDescriptionParams) (bool, error)
 	GetChat(ctx context.Context, params *bot.GetChatParams) (*models.ChatFullInfo, error)
+	GetChatMember(ctx context.Context, params *bot.GetChatMemberParams) (*models.ChatMember, error)
 }
 
 // Subscribers is the subscription storage.
@@ -53,14 +55,19 @@ type Subscribers interface {
 	// Migrate moves a group's subscription and hour, or its Unsubscribe, to
 	// the new id Telegram gave it as a supergroup.
 	Migrate(from, to int64) (bool, error)
-	// Hour returns the Moscow delivery hour; false when not subscribed.
-	Hour(chatID int64) (int, bool)
-	SetHour(chatID int64, hour int) error
-	// Due returns the subscribers whose hour is at or before hour and who
-	// have not got the post on day.
-	Due(hour int, day string) []int64
+	// Time returns the Moscow delivery time of a chat, in minutes since
+	// midnight (see subscribers.At); false when not subscribed.
+	Time(chatID int64) (int, bool)
+	SetTime(chatID int64, t int) error
+	// Due returns the subscribers whose time is at or before now, in minutes
+	// since midnight, and who have not got the post on day.
+	Due(now int, day string) []int64
+	// Known returns the subscribed chats and the ones that unsubscribed.
+	Known() []int64
 	// Delivered reports whether chat got the post on day.
 	Delivered(chat, day string) bool
+	// LastDelivered returns the last day chat got the post; "" for none.
+	LastDelivered(chat string) string
 	// MarkDelivered records that chat got the post on day.
 	MarkDelivered(chat, day string) error
 }

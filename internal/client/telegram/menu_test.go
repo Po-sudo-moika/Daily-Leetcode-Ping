@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -130,7 +131,7 @@ func TestHandleSubscribe_EditsMenuInPlace(t *testing.T) {
 		t.Fatalf("subscribers %v, want [10]", subs.chats())
 	}
 	edit := onlyEdit(t, api)
-	if edit.Text != subscribedText(subscribers.DefaultHour) || !strings.Contains(edit.Text, "11:00") {
+	if edit.Text != subscribedText(subscribers.DefaultTime) || !strings.Contains(edit.Text, "11:00") {
 		t.Fatalf("unexpected text %q", edit.Text)
 	}
 	if got := callbacks(t, edit.ReplyMarkup); !slices.Contains(got, callbackSettings) || len(got) != 4 {
@@ -140,7 +141,7 @@ func TestHandleSubscribe_EditsMenuInPlace(t *testing.T) {
 
 func TestHandleSubscribe_TellsTheChosenHour(t *testing.T) {
 	subs := subscribed(10)
-	subs.set(10, 9)
+	subs.set(10, subscribers.At(9, 0))
 	menu, api := newMenu(subs)
 
 	menu.HandleSubscribe(context.Background(), nil, callbackUpdate(10, callbackSubscribe))
@@ -148,7 +149,7 @@ func TestHandleSubscribe_TellsTheChosenHour(t *testing.T) {
 	if got := onlyEdit(t, api).Text; !strings.Contains(got, "09:00") {
 		t.Fatalf("text %q must name the chosen hour", got)
 	}
-	if hour, _ := subs.Hour(10); hour != 9 {
+	if hour, _ := subs.Time(10); hour != subscribers.At(9, 0) {
 		t.Fatalf("subscribing again must keep the chosen hour, got %d", hour)
 	}
 }
@@ -319,7 +320,7 @@ func TestHandleSettings_NotSubscribed(t *testing.T) {
 
 func TestHandleSettingsCommand_SendsSettingsScreen(t *testing.T) {
 	subs := subscribed(10)
-	subs.set(10, 7)
+	subs.set(10, subscribers.At(7, 0))
 	menu, api := newMenu(subs)
 
 	update := &models.Update{Message: &models.Message{Chat: models.Chat{ID: 10}, Text: "/settings"}}
@@ -333,73 +334,178 @@ func TestHandleSettingsCommand_SendsSettingsScreen(t *testing.T) {
 	}
 }
 
-func TestHandleHour_SavesAndMovesTheMark(t *testing.T) {
+// markedTimes returns the minute buttons whose button is marked as the current
+// choice.
+func markedTimes(t *testing.T, markup any) []string {
+	t.Helper()
+
+	var out []string
+	for _, b := range buttons(t, markup) {
+		if strings.HasPrefix(b.CallbackData, callbackTimePrefix) && strings.HasPrefix(b.Text, "✅") {
+			out = append(out, b.CallbackData)
+		}
+	}
+
+	return out
+}
+
+func timeData(hour, minute int) string {
+	return callbackTimePrefix + strconv.Itoa(subscribers.At(hour, minute))
+}
+
+func TestHandleHour_OffersTheMinutesAndSavesNothing(t *testing.T) {
 	subs := subscribed(10, 20)
 	menu, api := newMenu(subs)
 
 	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"9"))
 
-	if hour, _ := subs.Hour(10); hour != 9 {
-		t.Fatalf("saved hour %d, want 9", hour)
-	}
-	if hour, _ := subs.Hour(20); hour != subscribers.DefaultHour {
-		t.Fatalf("another subscriber's hour changed to %d", hour)
+	if at, _ := subs.Time(10); at != subscribers.DefaultTime {
+		t.Fatalf("choosing an hour saved %s, want nothing saved", subscribers.Format(at))
 	}
 	edit := onlyEdit(t, api)
-	if !strings.Contains(edit.Text, "09:00") || !strings.Contains(edit.Text, "МСК") {
-		t.Fatalf("text must confirm the new hour in Moscow time: %q", edit.Text)
+	if !strings.Contains(edit.Text, "09:__") {
+		t.Fatalf("text must name the hour: %q", edit.Text)
 	}
-	if marked := markedHours(t, edit.ReplyMarkup); !slices.Equal(marked, []string{callbackHourPrefix + "9"}) {
-		t.Fatalf("marked %v, want only 9", marked)
+
+	var got, want []string
+	for _, b := range buttons(t, edit.ReplyMarkup) {
+		if strings.HasPrefix(b.CallbackData, callbackTimePrefix) {
+			got = append(got, b.Text+"="+b.CallbackData)
+		}
+	}
+	for minute := 0; minute < 60; minute += 5 {
+		want = append(want, fmt.Sprintf("09:%02d=%s", minute, timeData(9, minute)))
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("minute buttons %v, want %v", got, want)
+	}
+	backs := 0
+	for _, data := range callbacks(t, edit.ReplyMarkup) {
+		if data == callbackSettings {
+			backs++
+		}
+	}
+	if backs != 1 {
+		t.Fatalf("want one Back button to the hours, got %d", backs)
 	}
 }
 
-func TestHandleHour_SameHourAgainIsNotAnError(t *testing.T) {
+func TestHandleHour_MarksTheCurrentTimeInItsOwnHour(t *testing.T) {
+	subs := subscribed()
+	subs.set(10, subscribers.At(9, 30))
+	menu, api := newMenu(subs)
+
+	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"9"))
+	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"10"))
+
+	if len(api.edited) != 2 {
+		t.Fatalf("edited %d times, want 2", len(api.edited))
+	}
+	if marked := markedTimes(t, api.edited[0].ReplyMarkup); !slices.Equal(marked, []string{timeData(9, 30)}) {
+		t.Fatalf("hour 9: marked %v, want only 09:30", marked)
+	}
+	if marked := markedTimes(t, api.edited[1].ReplyMarkup); len(marked) != 0 {
+		t.Fatalf("hour 10: marked %v, want nothing", marked)
+	}
+}
+
+func TestHandleTime_SavesAndMovesTheMark(t *testing.T) {
+	subs := subscribed(10, 20)
+	menu, api := newMenu(subs)
+
+	menu.HandleTime(context.Background(), nil, callbackUpdate(10, timeData(9, 30)))
+
+	if at, _ := subs.Time(10); at != subscribers.At(9, 30) {
+		t.Fatalf("saved time %s, want 09:30", subscribers.Format(at))
+	}
+	if at, _ := subs.Time(20); at != subscribers.DefaultTime {
+		t.Fatalf("another subscriber's time changed to %s", subscribers.Format(at))
+	}
+	edit := onlyEdit(t, api)
+	if !strings.Contains(edit.Text, "09:30") || !strings.Contains(edit.Text, "МСК") {
+		t.Fatalf("text must confirm the new time in Moscow time: %q", edit.Text)
+	}
+	if marked := markedHours(t, edit.ReplyMarkup); !slices.Equal(marked, []string{callbackHourPrefix + "9"}) {
+		t.Fatalf("marked %v, want only the hour 9", marked)
+	}
+}
+
+func TestHandleTime_SameTimeAgainIsNotAnError(t *testing.T) {
 	subs := subscribed(10)
 	menu, api := newMenu(subs)
 	// Telegram refuses an edit that changes nothing.
 	api.editErr = fmt.Errorf("%w, Bad Request: message is not modified", bot.ErrorBadRequest)
 
-	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"11"))
+	menu.HandleTime(context.Background(), nil, callbackUpdate(10, timeData(11, 0)))
 
 	if len(api.sent) != 0 {
 		t.Fatalf("an unchanged menu must not be re-sent: %+v", api.sent)
 	}
 }
 
-func TestHandleHour_RejectsBadButtons(t *testing.T) {
+func TestHandleTime_RejectsBadButtons(t *testing.T) {
 	for name, tc := range map[string]struct {
 		data string
 		subs *fakeSubscribers
 		want []int64
 	}{
-		"before the allowed range": {callbackHourPrefix + "3", subscribed(10), []int64{10}},
-		"after the allowed range":  {callbackHourPrefix + "24", subscribed(10), []int64{10}},
-		"not a number":             {callbackHourPrefix + "noon", subscribed(10), []int64{10}},
-		"not subscribed":           {callbackHourPrefix + "9", subscribed(), nil},
+		"before the allowed range": {timeData(3, 55), subscribed(10), []int64{10}},
+		"after the allowed range":  {timeData(24, 0), subscribed(10), []int64{10}},
+		"off the five minute step": {timeData(9, 7), subscribed(10), []int64{10}},
+		"not a number":             {callbackTimePrefix + "noon", subscribed(10), []int64{10}},
+		"not subscribed":           {timeData(9, 30), subscribed(), nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			menu, api := newMenu(tc.subs)
 
-			menu.HandleHour(context.Background(), nil, callbackUpdate(10, tc.data))
+			menu.HandleTime(context.Background(), nil, callbackUpdate(10, tc.data))
 
 			onlyEdit(t, api)
 			if got := tc.subs.chats(); !slices.Equal(got, tc.want) {
 				t.Fatalf("a bad button changed the subscribers: %v, want %v", got, tc.want)
 			}
-			if hour, found := tc.subs.Hour(10); found && hour != subscribers.DefaultHour {
-				t.Fatalf("hour changed to %d", hour)
+			if at, found := tc.subs.Time(10); found && at != subscribers.DefaultTime {
+				t.Fatalf("time changed to %s", subscribers.Format(at))
 			}
 		})
 	}
 }
 
-func TestHandleHour_ReportsStoreFailure(t *testing.T) {
+func TestHandleHour_RejectsBadButtons(t *testing.T) {
+	for name, data := range map[string]string{
+		"before the allowed range": callbackHourPrefix + "3",
+		"after the allowed range":  callbackHourPrefix + "24",
+		"not a number":             callbackHourPrefix + "noon",
+	} {
+		t.Run(name, func(t *testing.T) {
+			menu, api := newMenu(subscribed(10))
+
+			menu.HandleHour(context.Background(), nil, callbackUpdate(10, data))
+
+			edit := onlyEdit(t, api)
+			if strings.Contains(edit.Text, "__") {
+				t.Fatalf("a bad hour must show the settings, not minutes: %q", edit.Text)
+			}
+		})
+	}
+}
+
+func TestHandleHour_NotSubscribedShowsTheSettingsScreen(t *testing.T) {
+	menu, api := newMenu(subscribed())
+
+	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"9"))
+
+	if got := onlyEdit(t, api).Text; got != settingsNotSubscribedText {
+		t.Fatalf("text %q, want %q", got, settingsNotSubscribedText)
+	}
+}
+
+func TestHandleTime_ReportsStoreFailure(t *testing.T) {
 	subs := subscribed(10)
 	subs.failWrite = errors.New("disk full")
 	menu, api := newMenu(subs)
 
-	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"9"))
+	menu.HandleTime(context.Background(), nil, callbackUpdate(10, timeData(9, 30)))
 
 	edit := onlyEdit(t, api)
 	if !strings.Contains(edit.Text, saveFailedText) {
@@ -423,6 +529,7 @@ func TestWholeVisit_NeverSendsANewMessage(t *testing.T) {
 		{callbackSubscribe, menu.HandleSubscribe},
 		{callbackSettings, menu.HandleSettings},
 		{callbackHourPrefix + "8", menu.HandleHour},
+		{timeData(8, 30), menu.HandleTime},
 		{callbackMenu, menu.HandleBack},
 		{callbackAbout, menu.HandleAbout},
 		{callbackMenu, menu.HandleBack},
@@ -434,8 +541,8 @@ func TestWholeVisit_NeverSendsANewMessage(t *testing.T) {
 	if len(api.sent) != 1 {
 		t.Fatalf("sent %d messages, want only the one from /start", len(api.sent))
 	}
-	if len(api.edited) != 7 || len(api.answered) != 7 {
-		t.Fatalf("edited %d, answered %d; want 7 each", len(api.edited), len(api.answered))
+	if len(api.edited) != 8 || len(api.answered) != 8 {
+		t.Fatalf("edited %d, answered %d; want 8 each", len(api.edited), len(api.answered))
 	}
 	for _, e := range api.edited {
 		if e.ChatID != int64(10) || e.MessageID != 77 {
@@ -464,7 +571,7 @@ func TestEditFallback_SendsOneNewMenuWhenMessageCannotBeEdited(t *testing.T) {
 				t.Fatalf("sent %d messages, want one new menu", len(api.sent))
 			}
 			msg := api.sent[0]
-			if msg.ChatID != int64(10) || msg.Text != subscribedText(subscribers.DefaultHour) {
+			if msg.ChatID != int64(10) || msg.Text != subscribedText(subscribers.DefaultTime) {
 				t.Fatalf("unexpected new menu: %+v", msg)
 			}
 			if got := callbacks(t, msg.ReplyMarkup); !slices.Contains(got, callbackSettings) {
@@ -474,14 +581,14 @@ func TestEditFallback_SendsOneNewMenuWhenMessageCannotBeEdited(t *testing.T) {
 	}
 }
 
-func TestEditFallback_HourSettingShowsSettingsInTheNewMessage(t *testing.T) {
+func TestEditFallback_TimeSettingShowsSettingsInTheNewMessage(t *testing.T) {
 	subs := subscribed(10)
 	menu, api := newMenu(subs)
 	api.editErr = fmt.Errorf("%w, Bad Request: message to edit not found", bot.ErrorBadRequest)
 
-	menu.HandleHour(context.Background(), nil, callbackUpdate(10, callbackHourPrefix+"6"))
+	menu.HandleTime(context.Background(), nil, callbackUpdate(10, timeData(6, 0)))
 
-	if hour, _ := subs.Hour(10); hour != 6 {
+	if hour, _ := subs.Time(10); hour != subscribers.At(6, 0) {
 		t.Fatalf("hour %d, want 6", hour)
 	}
 	if len(api.sent) != 1 {
@@ -574,7 +681,7 @@ func TestOldMenuMessage_FallsBackToANewMenu(t *testing.T) {
 	if !slices.Equal(subs.chats(), []int64{10}) {
 		t.Fatalf("subscribers %v, want [10]", subs.chats())
 	}
-	if len(api.sent) != 2 || api.sent[0].Text != subscribedText(subscribers.DefaultHour) || api.sent[1].Text != aboutText {
+	if len(api.sent) != 2 || api.sent[0].Text != subscribedText(subscribers.DefaultTime) || api.sent[1].Text != aboutText {
 		t.Fatalf("unexpected replies: %+v", api.sent)
 	}
 }
@@ -658,7 +765,7 @@ func TestWelcome_FixedChatWithoutSubscriptionIsToldItGetsThePost(t *testing.T) {
 
 func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
 	subs := subscribed()
-	subs.set(10, 15)
+	subs.set(10, subscribers.At(15, 0))
 	menu, api := newMenu(subs)
 
 	menu.HandleStart(context.Background(), nil, startUpdate(10))
@@ -667,13 +774,13 @@ func TestWelcome_ShowsTheSubscriptionState(t *testing.T) {
 	if len(api.sent) != 2 {
 		t.Fatalf("sent %d messages, want 2", len(api.sent))
 	}
-	if want := welcomeFor(15, true); api.sent[0].Text != want || !strings.Contains(want, "15:00") {
+	if want := welcomeFor(subscribers.At(15, 0), true); api.sent[0].Text != want || !strings.Contains(want, "15:00") {
 		t.Fatalf("subscriber sees %q, want the hour 15:00 in %q", api.sent[0].Text, want)
 	}
 	if want := welcomeFor(0, false); api.sent[1].Text != want || strings.Contains(want, "00:00") {
 		t.Fatalf("non-subscriber sees %q, want %q", api.sent[1].Text, want)
 	}
-	if welcomeFor(15, true) == welcomeFor(0, false) {
+	if welcomeFor(subscribers.At(15, 0), true) == welcomeFor(0, false) {
 		t.Fatal("the two states must read differently")
 	}
 }

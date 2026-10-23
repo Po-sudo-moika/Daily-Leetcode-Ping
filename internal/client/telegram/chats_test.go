@@ -24,7 +24,7 @@ func TestMyChatMember_AddedToGroupSubscribesItAtDefaultHourAndItGetsThePost(t *t
 
 				b.ProcessUpdate(context.Background(), myChatMemberUpdate(group, chatType, models.ChatMemberTypeLeft, role))
 
-				if hour, ok := subs.Hour(group); !ok || hour != subscribers.DefaultHour {
+				if hour, ok := subs.Time(group); !ok || hour != subscribers.DefaultTime {
 					t.Fatalf("hour=%d subscribed=%v, want subscribed at %d", hour, ok, subscribers.DefaultHour)
 				}
 
@@ -191,10 +191,10 @@ func TestFirstContact_NewPrivateChatIsSubscribedByStart(t *testing.T) {
 
 	b.ProcessUpdate(context.Background(), commandUpdate(private, "/start"))
 
-	if hour, ok := subs.Hour(private); !ok || hour != subscribers.DefaultHour {
+	if hour, ok := subs.Time(private); !ok || hour != subscribers.DefaultTime {
 		t.Fatalf("hour=%d subscribed=%v, want subscribed at %d with no Subscribe press", hour, ok, subscribers.DefaultHour)
 	}
-	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultHour, true) {
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultTime, true) {
 		t.Fatalf("the menu must show the subscribed state: %+v", api.sent)
 	}
 }
@@ -215,7 +215,7 @@ func TestFirstContact_AnyUpdateFromAnUnseenChatSubscribesIt(t *testing.T) {
 
 			b.ProcessUpdate(context.Background(), update)
 
-			if hour, ok := subs.Hour(group); !ok || hour != subscribers.DefaultHour {
+			if hour, ok := subs.Time(group); !ok || hour != subscribers.DefaultTime {
 				t.Fatalf("hour=%d subscribed=%v, want subscribed at %d", hour, ok, subscribers.DefaultHour)
 			}
 		})
@@ -276,7 +276,7 @@ func TestFirstContact_UpgradedGroupKeepsItsChoice(t *testing.T) {
 		b.ProcessUpdate(ctx, upgraded)
 		b.ProcessUpdate(ctx, commandUpdate(supergroup, "/start"))
 
-		if _, ok := store.Hour(supergroup); ok {
+		if _, ok := store.Time(supergroup); ok {
 			t.Fatal("a group that pressed Unsubscribe must stay out as a supergroup")
 		}
 	})
@@ -287,10 +287,10 @@ func TestFirstContact_UpgradedGroupKeepsItsChoice(t *testing.T) {
 
 		b.ProcessUpdate(context.Background(), upgraded)
 
-		if hour, ok := store.Hour(supergroup); !ok || hour != 15 {
+		if hour, ok := store.Time(supergroup); !ok || hour != subscribers.At(15, 0) {
 			t.Fatalf("hour=%d subscribed=%v, want the supergroup at 15", hour, ok)
 		}
-		if _, ok := store.Hour(group); ok {
+		if _, ok := store.Time(group); ok {
 			t.Fatal("the old id must be gone")
 		}
 	})
@@ -298,12 +298,12 @@ func TestFirstContact_UpgradedGroupKeepsItsChoice(t *testing.T) {
 
 func TestFirstContact_KeepsTheHourOfASubscriber(t *testing.T) {
 	subs := subscribed()
-	subs.set(private, 15)
+	subs.set(private, subscribers.At(15, 0))
 	b, _ := newRegisteredBot(t, subs)
 
 	b.ProcessUpdate(context.Background(), commandUpdate(private, "/start"))
 
-	if hour, _ := subs.Hour(private); hour != 15 {
+	if hour, _ := subs.Time(private); hour != subscribers.At(15, 0) {
 		t.Fatalf("hour %d, want 15", hour)
 	}
 }
@@ -318,14 +318,14 @@ func TestFirstContact_UnsubscribedChatStaysOutAlsoAfterRestart(t *testing.T) {
 	b.ProcessUpdate(ctx, callbackUpdate(private, callbackUnsubscribe))
 	b.ProcessUpdate(ctx, commandUpdate(private, "/start"))
 	b.ProcessUpdate(ctx, commandUpdate(private, "/settings"))
-	if _, ok := store.Hour(private); ok {
+	if _, ok := store.Time(private); ok {
 		t.Fatal("/start must not subscribe a chat that pressed Unsubscribe")
 	}
 
 	restarted := openStore(t, path, nil)
 	b, api = newRegisteredBot(t, restarted)
 	b.ProcessUpdate(ctx, commandUpdate(private, "/start"))
-	if _, ok := restarted.Hour(private); ok {
+	if _, ok := restarted.Time(private); ok {
 		t.Fatal("after a restart /start must not subscribe a chat that pressed Unsubscribe")
 	}
 	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(0, false) {
@@ -334,7 +334,7 @@ func TestFirstContact_UnsubscribedChatStaysOutAlsoAfterRestart(t *testing.T) {
 
 	// Pressing Subscribe is the way back.
 	b.ProcessUpdate(ctx, callbackUpdate(private, callbackSubscribe))
-	if _, ok := restarted.Hour(private); !ok {
+	if _, ok := restarted.Time(private); !ok {
 		t.Fatal("Subscribe must subscribe the chat again")
 	}
 }

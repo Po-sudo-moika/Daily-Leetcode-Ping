@@ -16,16 +16,18 @@ type Sender interface {
 	SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error
 }
 
-// Deliver runs one delivery round at now, a Moscow time. Everyone whose hour
+// Deliver runs one delivery round at now, a Moscow time. Everyone whose time
 // has come and who has not got today's post gets it, so a round after the
-// host slept or after a restart catches up on the hours it missed. It fetches
-// the current problem once for the round, and not at all when nobody is due,
-// so LeetCode is asked at most once an hour. A failed fetch sends nothing and
-// records nothing, so the next round tries again.
+// host slept or after a restart catches up on the times it missed. It fetches
+// the current problem once for the round, and not at all when nobody is due.
+// A failed fetch sends nothing and records nothing, so the next round tries
+// again.
 func Deliver(ctx context.Context, leetcodeClient leetcode.Client, sender Sender, now time.Time) {
 	if !sender.HasDue(now) {
 		return
 	}
+
+	log.Printf("Запуск ежедневной рассылки в %s...", now.Format("15:04"))
 
 	Post(ctx, leetcodeClient, func(ctx context.Context, question domain.DailyQuestion) error {
 		return sender.SendDue(ctx, now, question)

@@ -29,6 +29,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	ownerID, err := config.LoadOwnerID(".env", os.Getenv, conf.Telegram.OwnerID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ownerID == 0 {
+		log.Println("Владелец бота не задан (telegram.ownerId или TELEGRAM_OWNER_ID): команда /chats отключена")
+	}
+
 	store, err := subscribers.Open(conf.Storage.SubscribersPath)
 	if err != nil {
 		log.Fatalf("error while opening subscribers store: %v", err)
@@ -49,7 +57,7 @@ func main() {
 
 	fixedChats := telegram.ResolveFixedChats(ctx, tgBot, conf.Telegram.TelegramChats)
 
-	menu := telegram.NewMenu(tgBot, store, fixedChats)
+	menu := telegram.NewMenu(tgBot, store, fixedChats).WithOwner(ownerID)
 	menu.Register(tgBot)
 
 	tgClient, err := telegram.New(tgBot, fixedChats, store)
@@ -57,7 +65,8 @@ func main() {
 		log.Fatalf("error while creating telegram client: %v", err)
 	}
 
-	leetcodeClient := leetcode.New("https://leetcode.com")
+	// A failed fetch is not repeated for an hour, though the round runs every minute.
+	leetcodeClient := leetcode.NewBackoff(leetcode.New("https://leetcode.com"), time.Hour)
 
 	if err := menu.Setup(ctx); err != nil {
 		// The bot still works without its profile text, so keep going.
@@ -68,14 +77,13 @@ func main() {
 	// so two rounds never send the same post; the round after catches up.
 	c := cron.New(cron.WithLocation(moscowLoc), cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)))
 
-	// Every full hour, everyone whose delivery hour has come and who has not
-	// got today's post gets it: subscribers from the hour they chose, the
-	// fixed chats from 11:00. So the first round after the host wakes up, or
-	// after a restart, catches up on the hours it missed.
-	_, err = c.AddFunc("0 * * * *", func() {
-		now := time.Now().In(moscowLoc)
-		log.Printf("Запуск ежедневной задачи в %s...", now.Format("15:04"))
-		daily.Deliver(ctx, leetcodeClient, tgClient, now)
+	// Every minute, everyone whose delivery time has come and who has not got
+	// today's post gets it: subscribers from the time they chose, the fixed
+	// chats from 11:00. So a post is never more than a minute late, and the
+	// first round after the host wakes up, or after a restart, catches up on
+	// the times it missed. A round with nobody due does nothing.
+	_, err = c.AddFunc("* * * * *", func() {
+		daily.Deliver(ctx, leetcodeClient, tgClient, time.Now().In(moscowLoc))
 	})
 	if err != nil {
 		log.Fatal("Ошибка настройки cron:", err)

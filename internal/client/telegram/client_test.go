@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -84,7 +85,7 @@ func TestSendToFixedChats_AfterFixedHourIsNotRepeated(t *testing.T) {
 // at 10:15 already had its post for the day: 11:00 does not repeat it.
 func TestSendToFixedChats_SubscribedChatAfterItsHourIsNotRepeated(t *testing.T) {
 	subs := subscribed(5)
-	subs.set(5, 9)
+	subs.set(5, subscribers.At(9, 0))
 	api := &fakeAPI{}
 	c, _ := New(api, []string{"5", "@news"}, subs)
 
@@ -101,7 +102,7 @@ func TestSendToFixedChats_SubscribedChatAfterItsHourIsNotRepeated(t *testing.T) 
 // at 14:30 still gets its post at 18:00, the hour it chose.
 func TestSendToFixedChats_SubscribedChatBeforeItsHourKeepsItsPostDue(t *testing.T) {
 	subs := subscribed(5)
-	subs.set(5, 18)
+	subs.set(5, subscribers.At(18, 0))
 	api := &fakeAPI{}
 	c, _ := New(api, []string{"5"}, subs)
 
@@ -148,8 +149,8 @@ func TestSendDue_FixedChatsAndSubscribersAtDefaultHour(t *testing.T) {
 // Each chat is due once its own hour has come, and only until it got the post.
 func TestSendDue_OnlyChatsWhoseHourHasCome(t *testing.T) {
 	subs := subscribed(1, 2, 3)
-	subs.set(1, 9)
-	subs.set(3, 9)
+	subs.set(1, subscribers.At(9, 0))
+	subs.set(3, subscribers.At(9, 0))
 	api := &fakeAPI{}
 	c, _ := New(api, []string{"111"}, subs)
 	ctx := context.Background()
@@ -180,9 +181,9 @@ func TestSendDue_OnlyChatsWhoseHourHasCome(t *testing.T) {
 
 func TestSendDue_EveryChatGetsOnePostADay(t *testing.T) {
 	subs := subscribed(1, 2, 3, 4)
-	subs.set(1, 4)
-	subs.set(2, 9)
-	subs.set(4, 23)
+	subs.set(1, subscribers.At(4, 0))
+	subs.set(2, subscribers.At(9, 0))
+	subs.set(4, subscribers.At(23, 0))
 	api := &fakeAPI{}
 	c, _ := New(api, []string{"111"}, subs)
 
@@ -202,7 +203,7 @@ func TestSendDue_EveryChatGetsOnePostADay(t *testing.T) {
 
 func TestHasDue(t *testing.T) {
 	subs := subscribed(1)
-	subs.set(1, 9)
+	subs.set(1, subscribers.At(9, 0))
 	c, _ := New(&fakeAPI{}, []string{"111"}, subs)
 	ctx := context.Background()
 
@@ -232,7 +233,7 @@ func TestHasDue(t *testing.T) {
 // hour it chose, not at both the chosen and the fixed hour.
 func TestSendDue_FixedChatThatSubscribedFollowsItsHour(t *testing.T) {
 	subs := subscribed(5, 6)
-	subs.set(5, 9)
+	subs.set(5, subscribers.At(9, 0))
 	api := &fakeAPI{}
 	c, _ := New(api, []string{"5", "7"}, subs)
 	ctx := context.Background()
@@ -333,7 +334,7 @@ func openStore(t *testing.T, path string, hours map[int64]int) *subscribers.Stor
 		if _, err := store.Add(chatID); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetHour(chatID, hour); err != nil {
+		if err := store.SetTime(chatID, subscribers.At(hour, 0)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -405,7 +406,7 @@ func TestSendDue_HourChangeAfterDeliveryDoesNotResend(t *testing.T) {
 	if got := round(t, c, api, at(11, 11, 0)); !slices.Equal(got, []any{int64(1)}) {
 		t.Fatalf("11:00 sent to %v, want [1]", got)
 	}
-	if err := store.SetHour(1, 18); err != nil {
+	if err := store.SetTime(1, subscribers.At(18, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if got := round(t, c, api, at(11, 18, 0)); len(got) != 0 {
@@ -429,7 +430,7 @@ func TestSendDue_HourChangeToPassedHourDeliversNextRound(t *testing.T) {
 	if got := round(t, c, api, at(11, 12, 0)); len(got) != 0 {
 		t.Fatalf("12:00 sent to %v, want nobody", got)
 	}
-	if err := store.SetHour(1, 9); err != nil {
+	if err := store.SetTime(1, subscribers.At(9, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if got := round(t, c, api, at(11, 13, 0)); !slices.Equal(got, []any{int64(1)}) {
@@ -527,6 +528,7 @@ func TestFixedChatByName_GetsOnePostADayAtTheHourItChose(t *testing.T) {
 
 	b.ProcessUpdate(ctx, callbackUpdate(group, callbackSubscribe))
 	b.ProcessUpdate(ctx, callbackUpdate(group, callbackHourPrefix+"9"))
+	b.ProcessUpdate(ctx, callbackUpdate(group, timeData(9, 0)))
 
 	api := &fakeAPI{}
 	c, _ := New(api, fixed, subs)
@@ -562,5 +564,119 @@ func TestSendDue_EveryKindOfChatGetsTheSamePost(t *testing.T) {
 		if msg.Text != getPostMessageSchema(question) || msg.ParseMode != models.ParseModeMarkdown {
 			t.Fatalf("chat %v got a different post: %q (%s)", msg.ChatID, msg.Text, msg.ParseMode)
 		}
+	}
+}
+
+// A chat that picked 09:30 is not due at 09:29, is due at 09:30 and gets the
+// post once that day, and again the next day.
+func TestSendDue_ChatWithMinutesGetsThePostAtItsMinuteOnceADay(t *testing.T) {
+	store := openStore(t, filepath.Join(t.TempDir(), "subscribers.json"), nil)
+	if _, err := store.Add(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetTime(1, subscribers.At(9, 30)); err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{}
+	c, _ := New(api, nil, store)
+
+	if c.HasDue(at(11, 9, 29)) {
+		t.Fatal("nobody may be due at 09:29")
+	}
+	if got := round(t, c, api, at(11, 9, 29)); len(got) != 0 {
+		t.Fatalf("09:29 sent to %v, want nobody", got)
+	}
+	if !c.HasDue(at(11, 9, 30)) {
+		t.Fatal("the chat must be due at 09:30")
+	}
+	if got, want := round(t, c, api, at(11, 9, 30)), []any{int64(1)}; !slices.Equal(got, want) {
+		t.Fatalf("09:30 sent to %v, want %v", got, want)
+	}
+	for _, minute := range []int{31, 59} {
+		if got := round(t, c, api, at(11, 9, minute)); len(got) != 0 {
+			t.Fatalf("09:%d sent to %v, want nobody: the post goes out once a day", minute, got)
+		}
+	}
+	if got := round(t, c, api, at(11, 20, 0)); len(got) != 0 {
+		t.Fatalf("20:00 sent to %v, want nobody", got)
+	}
+	if got, want := round(t, c, api, at(12, 9, 30)), []any{int64(1)}; !slices.Equal(got, want) {
+		t.Fatalf("next day 09:30 sent to %v, want %v", got, want)
+	}
+}
+
+// After a restart at 09:47 a chat of 09:30 that has not got the post is due
+// at once.
+func TestSendDue_ChatWithMinutesCatchesUpAfterARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subscribers.json")
+	store := openStore(t, path, nil)
+	if _, err := store.Add(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetTime(1, subscribers.At(9, 30)); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := subscribers.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{}
+	c, _ := New(api, nil, restarted)
+
+	if got, want := round(t, c, api, at(11, 9, 47)), []any{int64(1)}; !slices.Equal(got, want) {
+		t.Fatalf("09:47 sent to %v, want %v", got, want)
+	}
+}
+
+// A subscribers file written by the previous version has hours only: every
+// chat keeps its saved hour, at :00.
+func TestSendDue_FileOfThePreviousVersionKeepsEveryHourAtZeroMinutes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subscribers.json")
+	if err := os.WriteFile(path, []byte(`{"chats":[5,6],"hours":{"5":9}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := subscribers.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{}
+	c, _ := New(api, nil, store)
+
+	if got := round(t, c, api, at(11, 8, 59)); len(got) != 0 {
+		t.Fatalf("08:59 sent to %v, want nobody", got)
+	}
+	if got, want := round(t, c, api, at(11, 9, 0)), []any{int64(5)}; !slices.Equal(got, want) {
+		t.Fatalf("09:00 sent to %v, want %v", got, want)
+	}
+	if got := round(t, c, api, at(11, 10, 59)); len(got) != 0 {
+		t.Fatalf("10:59 sent to %v, want nobody", got)
+	}
+	if got, want := round(t, c, api, at(11, 11, 0)), []any{int64(6)}; !slices.Equal(got, want) {
+		t.Fatalf("11:00 sent to %v, want %v", got, want)
+	}
+}
+
+// The round runs every minute, so a chat Telegram refuses is tried once in a
+// clock hour, not every minute.
+func TestSendDue_FailedSendIsTriedOncePerClockHour(t *testing.T) {
+	api := &fakeAPI{sendErr: map[any]error{int64(5): context.DeadlineExceeded, "111": context.DeadlineExceeded}}
+	subs := subscribed(5)
+	c, _ := New(api, []string{"111"}, subs)
+
+	for minute := 0; minute < 60; minute++ {
+		if c.HasDue(at(11, 11, minute)) {
+			if err := c.SendDue(context.Background(), at(11, 11, minute), question); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if want := []any{"111", int64(5)}; !slices.Equal(api.recipients(), want) {
+		t.Fatalf("11:00-11:59 tried %v, want %v once each", api.recipients(), want)
+	}
+
+	api.sent, api.sendErr = nil, nil
+	if got, want := round(t, c, api, at(11, 12, 0)), []any{"111", int64(5)}; !slices.Equal(got, want) {
+		t.Fatalf("12:00 sent to %v, want %v", got, want)
 	}
 }

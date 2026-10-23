@@ -10,6 +10,10 @@ env = "production"
 telegramChats = [
 	"your chat id"
 ]
+# Telegram user id of the bot owner, the only person /chats answers. 0 = off.
+# Keep your real id in a local copy of this file, or in TELEGRAM_OWNER_ID
+# (environment or .env). Never commit it. See README.md.
+ownerId = 0
 
 [storage]
 # Where subscriptions are kept. Mount this folder as a Docker volume.

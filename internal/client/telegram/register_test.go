@@ -16,6 +16,12 @@ import (
 func newRegisteredBot(t *testing.T, subs Subscribers, fixedChats ...string) (*bot.Bot, *fakeAPI) {
 	t.Helper()
 
+	return newRegisteredBotWithOwner(t, subs, 0, fixedChats...)
+}
+
+func newRegisteredBotWithOwner(t *testing.T, subs Subscribers, ownerID int64, fixedChats ...string) (*bot.Bot, *fakeAPI) {
+	t.Helper()
+
 	options := append(BotOptions(subs), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	b, err := bot.New("123456:fake-token-for-tests", options...)
 	if err != nil {
@@ -23,7 +29,7 @@ func newRegisteredBot(t *testing.T, subs Subscribers, fixedChats ...string) (*bo
 	}
 
 	api := &fakeAPI{}
-	NewMenu(api, subs, fixedChats).Register(b)
+	NewMenu(api, subs, fixedChats).WithOwner(ownerID).Register(b)
 
 	return b, api
 }
@@ -41,7 +47,7 @@ func TestRegister_StartCommand(t *testing.T) {
 
 	b.ProcessUpdate(context.Background(), commandUpdate(10, "/start"))
 
-	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultHour, true) {
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultTime, true) {
 		t.Fatalf("unexpected reply to /start: %+v", api.sent)
 	}
 }
@@ -68,8 +74,12 @@ func TestRegister_Buttons(t *testing.T) {
 
 	b.ProcessUpdate(ctx, callbackUpdate(10, callbackSettings))
 	b.ProcessUpdate(ctx, callbackUpdate(10, callbackHourPrefix+"15"))
-	if hour, _ := subs.Hour(10); hour != 15 {
-		t.Fatalf("hour button: hour %d, want 15", hour)
+	if at, _ := subs.Time(10); at != subscribers.DefaultTime {
+		t.Fatalf("hour button saved %s, want nothing saved yet", subscribers.Format(at))
+	}
+	b.ProcessUpdate(ctx, callbackUpdate(10, timeData(15, 45)))
+	if at, _ := subs.Time(10); at != subscribers.At(15, 45) {
+		t.Fatalf("minute button: time %s, want 15:45", subscribers.Format(at))
 	}
 
 	b.ProcessUpdate(ctx, callbackUpdate(10, callbackMenu))
@@ -86,7 +96,7 @@ func TestRegister_Buttons(t *testing.T) {
 	for _, e := range api.edited {
 		texts = append(texts, e.Text)
 	}
-	if len(texts) != 6 || texts[0] != subscribedText(11) || texts[3] != welcomeFor(15, true) || texts[4] != aboutText || texts[5] != unsubscribedText {
+	if len(texts) != 7 || texts[0] != subscribedText(subscribers.DefaultTime) || texts[4] != welcomeFor(subscribers.At(15, 45), true) || texts[5] != aboutText || texts[6] != unsubscribedText {
 		t.Fatalf("edited texts %q", texts)
 	}
 }
