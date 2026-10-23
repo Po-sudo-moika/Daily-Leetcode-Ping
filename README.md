@@ -210,6 +210,8 @@ docker run --env-file .env -v leetcode-ping-data:/app/data leetcode-ping
 
 - `--env-file .env` passes the token into the container (the file itself is not
   copied into the image).
-- `-v leetcode-ping-data:/app/data` keeps `data/subscribers.json` and `data/leetcode-links.json` in a Docker
-  volume, so subscriptions and links survive when the container is replaced. If you change
-  `storage.subscribersPath`, mount the folder of the new path instead.
+- `-v leetcode-ping-data:/app/data` keeps `data/subscribers.json` and
+  `data/leetcode-links.json` in a Docker volume, so subscriptions and links
+  survive when the container is replaced. If you change
+  `storage.subscribersPath` or `storage.linksPath`, mount the folder of the new
+  path instead.
