@@ -11,11 +11,14 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 )
 
+// A delivery time is a Moscow time of day, counted in minutes since midnight:
+// 09:30 is 570. Use At to build one and Format to print one.
 const (
 	// DefaultHour is the Moscow hour of the daily post for a new subscriber,
-	// and for every subscriber saved before the hour could be chosen.
+	// and for every subscriber saved before the time could be chosen.
 	DefaultHour = 11
 
 	// MinHour and MaxHour bound the Moscow hour a subscriber can choose.
@@ -24,15 +27,44 @@ const (
 	// of margin, so a post never carries the previous day's problem.
 	MinHour = 4
 	MaxHour = 23
+
+	// MinuteStep is the step of the minutes a subscriber can choose.
+	MinuteStep = 5
+
+	// DefaultTime, MinTime and MaxTime are DefaultHour, MinHour and MaxHour
+	// as delivery times; the last one is 23:55.
+	DefaultTime = DefaultHour * 60
+	MinTime     = MinHour * 60
+	MaxTime     = MaxHour*60 + 60 - MinuteStep
+
+	// deliveredKeepDays is how long the day a chat last got the post is kept.
+	deliveredKeepDays = 90
 )
 
-// ErrInvalidHour means the hour is outside MinHour..MaxHour.
-var ErrInvalidHour = errors.New("hour out of range")
+// ErrInvalidTime means the time is outside MinTime..MaxTime or is not a
+// multiple of MinuteStep minutes.
+var ErrInvalidTime = errors.New("time out of range")
+
+// At returns the delivery time of hour:minute.
+func At(hour, minute int) int {
+	return hour*60 + minute
+}
+
+// Format prints a delivery time as "09:30".
+func Format(t int) string {
+	return fmt.Sprintf("%02d:%02d", t/60, t%60)
+}
+
+// Now returns the delivery time of t, in the time zone of t: the moment from
+// which a chat with a delivery time at or before it is due.
+func Now(t time.Time) int {
+	return At(t.Hour(), t.Minute())
+}
 
 // ErrNotSubscribed means the chat has no subscription.
 var ErrNotSubscribed = errors.New("chat is not subscribed")
 
-// Store keeps the subscribers, their delivery hour, the chats that chose to
+// Store keeps the subscribers, their delivery time, the chats that chose to
 // unsubscribe and the day each chat last got the post in a small JSON file, so
 // that all of it survives a restart. It is safe for concurrent use.
 //
@@ -42,7 +74,7 @@ type Store struct {
 	path string
 
 	mu sync.Mutex
-	// chats maps a subscribed chat id to its Moscow delivery hour.
+	// chats maps a subscribed chat id to its Moscow delivery time.
 	chats map[int64]int
 	// optedOut holds the chats that pressed Unsubscribe. Only a deliberate
 	// subscribe (Add) takes a chat out of it; meeting the chat again (Meet)
@@ -54,13 +86,15 @@ type Store struct {
 
 // fileData is the file format. Chats is the original format and stays a plain
 // list of ids, so a file written before delivery hours existed loads as is and
-// an older build can still read a newer file. Hours lists only the chats that
-// chose something other than DefaultHour, keyed by chat id. OptedOut lists the
-// chats that pressed Unsubscribe. Delivered maps a chat to the last day it got
-// the post.
+// an older build can still read a newer file. Hours lists only the chats whose
+// time is not DefaultHour:00, keyed by chat id, and Minutes lists the minutes
+// of those that are not on the hour. An older build reads the hour and drops
+// the minutes. OptedOut lists the chats that pressed Unsubscribe. Delivered
+// maps a chat to the last day it got the post.
 type fileData struct {
 	Chats     []int64           `json:"chats"`
 	Hours     map[string]int    `json:"hours,omitempty"`
+	Minutes   map[string]int    `json:"minutes,omitempty"`
 	OptedOut  []int64           `json:"optedOut,omitempty"`
 	Delivered map[string]string `json:"delivered,omitempty"`
 }
@@ -83,7 +117,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	for _, chatID := range data.Chats {
-		s.chats[chatID] = DefaultHour
+		s.chats[chatID] = DefaultTime
 	}
 
 	for key, hour := range data.Hours {
@@ -94,7 +128,19 @@ func Open(path string) (*Store, error) {
 		// An hour for a chat that is not subscribed, or one outside the
 		// allowed range, is ignored: the subscriber keeps DefaultHour.
 		if _, ok := s.chats[chatID]; ok && validHour(hour) {
-			s.chats[chatID] = hour
+			s.chats[chatID] = At(hour, 0)
+		}
+	}
+
+	for key, minute := range data.Minutes {
+		chatID, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse subscribers file %s: bad chat id %q in minutes", path, key)
+		}
+		// A minute for a chat without a valid hour, or one that is not a
+		// step of MinuteStep, is ignored: the chat keeps its hour at :00.
+		if t, ok := s.chats[chatID]; ok && validTime(t+minute) {
+			s.chats[chatID] = t + minute
 		}
 	}
 
@@ -114,6 +160,10 @@ func Open(path string) (*Store, error) {
 
 func validHour(hour int) bool {
 	return hour >= MinHour && hour <= MaxHour
+}
+
+func validTime(t int) bool {
+	return t >= MinTime && t <= MaxTime && t%MinuteStep == 0
 }
 
 // Add subscribes a chat, because someone asked for it: the Subscribe button,
@@ -148,11 +198,11 @@ func (s *Store) Meet(chatID int64) (bool, error) {
 	return true, nil
 }
 
-// subscribe adds the chat at DefaultHour and forgets that it unsubscribed. A
+// subscribe adds the chat at DefaultTime and forgets that it unsubscribed. A
 // failed save leaves the store as it was. The caller holds s.mu.
 func (s *Store) subscribe(chatID int64) error {
 	wasOptedOut := s.optedOut[chatID]
-	s.chats[chatID] = DefaultHour
+	s.chats[chatID] = DefaultTime
 	delete(s.optedOut, chatID)
 
 	if err := s.save(); err != nil {
@@ -214,7 +264,7 @@ func (s *Store) Drop(chatID int64) (bool, error) {
 }
 
 // Migrate moves a chat to its new id when Telegram turns a group into a
-// supergroup: its subscription and hour, or its Unsubscribe, and the day it
+// supergroup: its subscription and time, or its Unsubscribe, and the day it
 // last got the post. The old id is forgotten. It reports whether there was
 // anything to move. A failed save leaves the store as it was.
 func (s *Store) Migrate(from, to int64) (bool, error) {
@@ -252,23 +302,23 @@ func (s *Store) Migrate(from, to int64) (bool, error) {
 	return true, nil
 }
 
-// Hour returns the Moscow delivery hour of a chat. The second result is false
+// Time returns the Moscow delivery time of a chat. The second result is false
 // when the chat is not subscribed.
-func (s *Store) Hour(chatID int64) (int, bool) {
+func (s *Store) Time(chatID int64) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	hour, ok := s.chats[chatID]
+	t, ok := s.chats[chatID]
 
-	return hour, ok
+	return t, ok
 }
 
-// SetHour changes the Moscow delivery hour of a subscribed chat. It returns
-// ErrInvalidHour for an hour outside MinHour..MaxHour and ErrNotSubscribed
-// for a chat without a subscription.
-func (s *Store) SetHour(chatID int64, hour int) error {
-	if !validHour(hour) {
-		return fmt.Errorf("%w: %d (allowed %d..%d)", ErrInvalidHour, hour, MinHour, MaxHour)
+// SetTime changes the Moscow delivery time of a subscribed chat. It returns
+// ErrInvalidTime for a time outside MinTime..MaxTime or off the MinuteStep
+// grid, and ErrNotSubscribed for a chat without a subscription.
+func (s *Store) SetTime(chatID int64, t int) error {
+	if !validTime(t) {
+		return fmt.Errorf("%w: %d (allowed %s..%s every %d minutes)", ErrInvalidTime, t, Format(MinTime), Format(MaxTime), MinuteStep)
 	}
 
 	s.mu.Lock()
@@ -279,7 +329,7 @@ func (s *Store) SetHour(chatID int64, hour int) error {
 		return ErrNotSubscribed
 	}
 
-	s.chats[chatID] = hour
+	s.chats[chatID] = t
 	if err := s.save(); err != nil {
 		s.chats[chatID] = old
 		return err
@@ -288,21 +338,45 @@ func (s *Store) SetHour(chatID int64, hour int) error {
 	return nil
 }
 
-// Due returns the subscribed chats whose delivery hour is at or before hour
-// and that have not got the post on day, in ascending order.
-func (s *Store) Due(hour int, day string) []int64 {
+// Due returns the subscribed chats whose delivery time is at or before now and
+// that have not got the post on day, in ascending order.
+func (s *Store) Due(now int, day string) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var chats []int64
-	for chatID, h := range s.chats {
-		if h <= hour && s.delivered[strconv.FormatInt(chatID, 10)] != day {
+	for chatID, t := range s.chats {
+		if t <= now && s.delivered[strconv.FormatInt(chatID, 10)] != day {
 			chats = append(chats, chatID)
 		}
 	}
 	slices.Sort(chats)
 
 	return chats
+}
+
+// Known returns the chats the store knows: the subscribed ones and the ones
+// that pressed Unsubscribe, in ascending order.
+func (s *Store) Known() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	chats := s.sorted()
+	for chatID := range s.optedOut {
+		chats = append(chats, chatID)
+	}
+	slices.Sort(chats)
+
+	return chats
+}
+
+// LastDelivered returns the last day chat got the post, or "" when the store
+// has no record of one.
+func (s *Store) LastDelivered(chat string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.delivered[chat]
 }
 
 // Delivered reports whether chat got the post on day.
@@ -313,17 +387,22 @@ func (s *Store) Delivered(chat, day string) bool {
 	return s.delivered[chat] == day
 }
 
-// MarkDelivered records that chat got the post on day. Records of other days
-// are dropped: for deciding who is due on day they mean the same as none, and
-// this keeps chats that left from piling up in the file. A failed save keeps
-// the record in memory, because the post did go out and must not go again.
+// MarkDelivered records that chat got the post on day. Records more than
+// deliveredKeepDays older than day are dropped: for deciding who is due on day
+// they mean the same as none, and this keeps chats that left from piling up in
+// the file. The newer ones stay, so the last post day of a chat is known. A
+// failed save keeps the record in memory, because the post did go out and must
+// not go again.
 func (s *Store) MarkDelivered(chat, day string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for other, d := range s.delivered {
-		if d != day {
-			delete(s.delivered, other)
+	if t, err := time.Parse(time.DateOnly, day); err == nil {
+		oldest := t.AddDate(0, 0, -deliveredKeepDays).Format(time.DateOnly)
+		for other, d := range s.delivered {
+			if d < oldest {
+				delete(s.delivered, other)
+			}
 		}
 	}
 	s.delivered[chat] = day
@@ -349,14 +428,21 @@ func (s *Store) save() error {
 		data.OptedOut = append(data.OptedOut, chatID)
 	}
 	slices.Sort(data.OptedOut)
-	for chatID, hour := range s.chats {
-		if hour == DefaultHour {
+	for chatID, t := range s.chats {
+		if t == DefaultTime {
 			continue
 		}
+		key := strconv.FormatInt(chatID, 10)
 		if data.Hours == nil {
 			data.Hours = make(map[string]int)
 		}
-		data.Hours[strconv.FormatInt(chatID, 10)] = hour
+		data.Hours[key] = t / 60
+		if t%60 != 0 {
+			if data.Minutes == nil {
+				data.Minutes = make(map[string]int)
+			}
+			data.Minutes[key] = t % 60
+		}
 	}
 
 	raw, err := json.MarshalIndent(data, "", "  ")

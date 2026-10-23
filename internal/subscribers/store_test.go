@@ -29,7 +29,7 @@ const today = "2026-10-11"
 // subscribed returns every subscribed chat in ascending order: with nothing
 // delivered today, everyone is due at the last hour.
 func subscribed(s *Store) []int64 {
-	return s.Due(MaxHour, today)
+	return s.Due(MaxTime, today)
 }
 
 func TestOpen_MissingFileIsEmpty(t *testing.T) {
@@ -54,7 +54,7 @@ func TestAddRemove(t *testing.T) {
 	if err != nil || added {
 		t.Fatalf("second add: added=%v err=%v", added, err)
 	}
-	if _, ok := s.Hour(42); !ok {
+	if _, ok := s.Time(42); !ok {
 		t.Fatal("42 must be subscribed")
 	}
 
@@ -66,7 +66,7 @@ func TestAddRemove(t *testing.T) {
 	if err != nil || removed {
 		t.Fatalf("second remove: removed=%v err=%v", removed, err)
 	}
-	if _, ok := s.Hour(42); ok {
+	if _, ok := s.Time(42); ok {
 		t.Fatal("42 must not be subscribed")
 	}
 }
@@ -81,7 +81,7 @@ func TestDueIsSorted(t *testing.T) {
 	}
 
 	want := []int64{-100123, 5, 30}
-	if got := s.Due(DefaultHour, today); !reflect.DeepEqual(got, want) {
+	if got := s.Due(DefaultTime, today); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
@@ -152,7 +152,7 @@ func TestAdd_RollsBackWhenSaveFails(t *testing.T) {
 	if _, err := s.Add(7); err == nil {
 		t.Fatal("want a save error")
 	}
-	if _, ok := s.Hour(7); ok {
+	if _, ok := s.Time(7); ok {
 		t.Fatal("a failed add must not stay in memory")
 	}
 }
@@ -212,14 +212,14 @@ func TestOpen_OldFormatKeepsEveryoneAtDefaultHour(t *testing.T) {
 		t.Fatalf("subscribers %v, want %v", got, want)
 	}
 	for _, chatID := range want {
-		if hour, ok := s.Hour(chatID); !ok || hour != DefaultHour {
+		if hour, ok := s.Time(chatID); !ok || hour != DefaultTime {
 			t.Errorf("chat %d: hour=%d ok=%v, want %d", chatID, hour, ok, DefaultHour)
 		}
 	}
-	if got := s.Due(DefaultHour, today); !reflect.DeepEqual(got, want) {
+	if got := s.Due(DefaultTime, today); !reflect.DeepEqual(got, want) {
 		t.Fatalf("due at default hour %v, want %v", got, want)
 	}
-	if got := s.Due(DefaultHour-1, today); len(got) != 0 {
+	if got := s.Due(DefaultTime-1, today); len(got) != 0 {
 		t.Fatalf("due before the default hour %v, want nobody", got)
 	}
 }
@@ -234,7 +234,7 @@ func TestOldFormat_SurvivesFirstSaveAndStaysReadableByOldBuilds(t *testing.T) {
 	if _, err := s.Add(99); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetHour(5, 9); err != nil {
+	if err := s.SetTime(5, At(9, 0)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -254,7 +254,7 @@ func TestOldFormat_SurvivesFirstSaveAndStaysReadableByOldBuilds(t *testing.T) {
 	}
 }
 
-func TestSetHour(t *testing.T) {
+func TestSetTime(t *testing.T) {
 	s, path := openTemp(t)
 	if _, err := s.Add(1); err != nil {
 		t.Fatal(err)
@@ -263,17 +263,17 @@ func TestSetHour(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if hour, ok := s.Hour(1); !ok || hour != DefaultHour {
-		t.Fatalf("new subscriber: hour=%d ok=%v, want default %d", hour, ok, DefaultHour)
+	if got, ok := s.Time(1); !ok || got != DefaultTime {
+		t.Fatalf("new subscriber: time=%d ok=%v, want default %d", got, ok, DefaultTime)
 	}
 
-	if err := s.SetHour(1, 8); err != nil {
+	if err := s.SetTime(1, At(8, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Due(8, today); !reflect.DeepEqual(got, []int64{1}) {
+	if got := s.Due(At(8, 0), today); !reflect.DeepEqual(got, []int64{1}) {
 		t.Fatalf("due at 8: %v, want [1]", got)
 	}
-	if got := s.Due(DefaultHour, today); !reflect.DeepEqual(got, []int64{1, 2}) {
+	if got := s.Due(DefaultTime, today); !reflect.DeepEqual(got, []int64{1, 2}) {
 		t.Fatalf("due at default: %v, want [1 2]", got)
 	}
 
@@ -281,48 +281,80 @@ func TestSetHour(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hour, _ := reopened.Hour(1); hour != 8 {
-		t.Fatalf("hour after restart %d, want 8", hour)
+	if got, _ := reopened.Time(1); got != At(8, 0) {
+		t.Fatalf("time after restart %d, want 08:00", got)
 	}
-	if hour, _ := reopened.Hour(2); hour != DefaultHour {
-		t.Fatalf("hour of other chat after restart %d, want %d", hour, DefaultHour)
+	if got, _ := reopened.Time(2); got != DefaultTime {
+		t.Fatalf("time of other chat after restart %d, want %d", got, DefaultTime)
 	}
 }
 
-func TestSetHour_Range(t *testing.T) {
+func TestSetTime_MinutesAreDueExactlyAtTheirMinute(t *testing.T) {
+	s, path := openTemp(t)
+	if _, err := s.Add(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTime(1, At(9, 30)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.Due(At(9, 29), today); len(got) != 0 {
+		t.Fatalf("due at 09:29 %v, want nobody", got)
+	}
+	if got := s.Due(At(9, 30), today); !reflect.DeepEqual(got, []int64{1}) {
+		t.Fatalf("due at 09:30 %v, want [1]", got)
+	}
+	if err := s.MarkDelivered("1", today); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Due(At(9, 31), today); len(got) != 0 {
+		t.Fatalf("due after the post %v, want nobody", got)
+	}
+
+	reopened := reopen(t, path)
+	if got, _ := reopened.Time(1); got != At(9, 30) {
+		t.Fatalf("time after restart %s, want 09:30", Format(got))
+	}
+	if got := reopened.Due(At(9, 30), "2026-10-12"); !reflect.DeepEqual(got, []int64{1}) {
+		t.Fatalf("due the next day at 09:30 %v, want [1]", got)
+	}
+}
+
+func TestSetTime_Range(t *testing.T) {
 	s, _ := openTemp(t)
 	if _, err := s.Add(1); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, hour := range []int{MinHour, MaxHour, DefaultHour} {
-		if err := s.SetHour(1, hour); err != nil {
-			t.Errorf("hour %d must be allowed: %v", hour, err)
+	for _, ok := range []int{MinTime, MaxTime, DefaultTime, At(9, 5), At(23, 55)} {
+		if err := s.SetTime(1, ok); err != nil {
+			t.Errorf("%s must be allowed: %v", Format(ok), err)
 		}
 	}
 	// 03:00 Moscow is when LeetCode changes the problem, so it is not offered.
-	for _, hour := range []int{-1, 0, 3, MinHour - 1, MaxHour + 1, 24} {
-		if err := s.SetHour(1, hour); !errors.Is(err, ErrInvalidHour) {
-			t.Errorf("hour %d: err=%v, want ErrInvalidHour", hour, err)
+	// Minutes are in steps of five.
+	for _, bad := range []int{-1, 0, At(3, 0), At(3, 55), MinTime - 5, MaxTime + 5, At(24, 0), At(9, 1), At(9, 59), At(10, 7)} {
+		if err := s.SetTime(1, bad); !errors.Is(err, ErrInvalidTime) {
+			t.Errorf("time %d: err=%v, want ErrInvalidTime", bad, err)
 		}
 	}
-	if hour, _ := s.Hour(1); hour != DefaultHour {
-		t.Fatalf("a rejected hour must not change the choice, got %d", hour)
+	if got, _ := s.Time(1); got != At(23, 55) {
+		t.Fatalf("a rejected time must not change the choice, got %s", Format(got))
 	}
 }
 
-func TestSetHour_NotSubscribed(t *testing.T) {
+func TestSetTime_NotSubscribed(t *testing.T) {
 	s, _ := openTemp(t)
 
-	if err := s.SetHour(1, 9); !errors.Is(err, ErrNotSubscribed) {
+	if err := s.SetTime(1, At(9, 0)); !errors.Is(err, ErrNotSubscribed) {
 		t.Fatalf("err=%v, want ErrNotSubscribed", err)
 	}
-	if _, ok := s.Hour(1); ok {
+	if _, ok := s.Time(1); ok {
 		t.Fatal("SetHour must not subscribe")
 	}
 }
 
-func TestSetHour_RollsBackWhenSaveFails(t *testing.T) {
+func TestSetTime_RollsBackWhenSaveFails(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(filepath.Join(dir, "sub", "subscribers.json"))
 	if err != nil {
@@ -340,10 +372,10 @@ func TestSetHour_RollsBackWhenSaveFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.SetHour(1, 9); err == nil {
+	if err := s.SetTime(1, At(9, 0)); err == nil {
 		t.Fatal("want a save error")
 	}
-	if hour, _ := s.Hour(1); hour != DefaultHour {
+	if hour, _ := s.Time(1); hour != DefaultTime {
 		t.Fatalf("a failed save must not change the hour, got %d", hour)
 	}
 }
@@ -353,7 +385,7 @@ func TestRemoveThenAddResetsHour(t *testing.T) {
 	if _, err := s.Add(1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetHour(1, 9); err != nil {
+	if err := s.SetTime(1, At(9, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Remove(1); err != nil {
@@ -371,7 +403,7 @@ func TestRemoveThenAddResetsHour(t *testing.T) {
 	if _, err := s.Add(1); err != nil {
 		t.Fatal(err)
 	}
-	if hour, _ := s.Hour(1); hour != DefaultHour {
+	if hour, _ := s.Time(1); hour != DefaultTime {
 		t.Fatalf("resubscribed chat has hour %d, want %d", hour, DefaultHour)
 	}
 }
@@ -384,13 +416,13 @@ func TestOpen_IgnoresStrayHours(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if hour, _ := s.Hour(1); hour != 9 {
+	if hour, _ := s.Time(1); hour != At(9, 0) {
 		t.Errorf("chat 1 hour %d, want 9", hour)
 	}
-	if hour, _ := s.Hour(2); hour != DefaultHour {
+	if hour, _ := s.Time(2); hour != DefaultTime {
 		t.Errorf("chat 2 has an out-of-range hour, want default, got %d", hour)
 	}
-	if _, ok := s.Hour(3); ok {
+	if _, ok := s.Time(3); ok {
 		t.Error("an hour entry must not subscribe chat 3")
 	}
 }
@@ -413,10 +445,10 @@ func TestDue_SkipsChatsDeliveredThatDay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := s.Due(MaxHour, today); !reflect.DeepEqual(got, []int64{2}) {
+	if got := s.Due(MaxTime, today); !reflect.DeepEqual(got, []int64{2}) {
 		t.Fatalf("due today %v, want [2]", got)
 	}
-	if got := s.Due(MaxHour, "2026-10-12"); !reflect.DeepEqual(got, []int64{1, 2}) {
+	if got := s.Due(MaxTime, "2026-10-12"); !reflect.DeepEqual(got, []int64{1, 2}) {
 		t.Fatalf("due the next day %v, want [1 2]", got)
 	}
 }
@@ -446,15 +478,17 @@ func TestMarkDelivered_SurvivesRestart(t *testing.T) {
 	if reopened.Delivered("2", today) {
 		t.Error("chat 2 never got the post")
 	}
-	if got := reopened.Due(MaxHour, today); len(got) != 0 {
+	if got := reopened.Due(MaxTime, today); len(got) != 0 {
 		t.Fatalf("due after restart %v, want nobody", got)
 	}
 }
 
-func TestMarkDelivered_DropsOlderDays(t *testing.T) {
+func TestMarkDelivered_KeepsRecentDaysAndDropsVeryOldOnes(t *testing.T) {
 	s, path := openTemp(t)
-	if err := s.MarkDelivered("@old", "2026-10-10"); err != nil {
-		t.Fatal(err)
+	for chat, day := range map[string]string{"@ancient": "2026-06-01", "@recent": "2026-10-10"} {
+		if err := s.MarkDelivered(chat, day); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := s.MarkDelivered("@news", today); err != nil {
 		t.Fatal(err)
@@ -468,8 +502,43 @@ func TestMarkDelivered_DropsOlderDays(t *testing.T) {
 	if err := json.Unmarshal(raw, &data); err != nil {
 		t.Fatal(err)
 	}
-	if want := map[string]string{"@news": today}; !reflect.DeepEqual(data.Delivered, want) {
+	if want := map[string]string{"@recent": "2026-10-10", "@news": today}; !reflect.DeepEqual(data.Delivered, want) {
 		t.Fatalf("deliveries in file %v, want %v", data.Delivered, want)
+	}
+	if got := s.LastDelivered("@recent"); got != "2026-10-10" {
+		t.Fatalf("last post of @recent %q, want 2026-10-10", got)
+	}
+	if got := s.LastDelivered("@ancient"); got != "" {
+		t.Fatalf("last post of a dropped record %q, want none", got)
+	}
+	// An older record never makes a chat due: it only differs from today.
+	if err := s.MarkDelivered("7", "2026-10-10"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Delivered("7", today) {
+		t.Fatal("a record of an older day must not count as today's post")
+	}
+}
+
+func TestKnown_ListsSubscribersAndChatsThatUnsubscribed(t *testing.T) {
+	s, _ := openTemp(t)
+	for _, chatID := range []int64{30, -100123, 5} {
+		if _, err := s.Add(chatID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Remove(30); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Meet(8); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Drop(8); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := s.Known(), []int64{-100123, 5, 30}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("known %v, want %v (a dropped chat is forgotten)", got, want)
 	}
 }
 
@@ -511,7 +580,7 @@ func TestOldFormats_LoadWithNothingDelivered(t *testing.T) {
 			}
 
 			want := []int64{-100123, 5, 30}
-			if got := s.Due(MaxHour, today); !reflect.DeepEqual(got, want) {
+			if got := s.Due(MaxTime, today); !reflect.DeepEqual(got, want) {
 				t.Fatalf("due %v, want everyone %v", got, want)
 			}
 
@@ -522,10 +591,10 @@ func TestOldFormats_LoadWithNothingDelivered(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := reopened.Due(MaxHour, today); !reflect.DeepEqual(got, []int64{-100123, 30}) {
+			if got := reopened.Due(MaxTime, today); !reflect.DeepEqual(got, []int64{-100123, 30}) {
 				t.Fatalf("due after a delivery and a restart %v, want [-100123 30]", got)
 			}
-			if hour, _ := reopened.Hour(5); hour != tc.hour5 {
+			if hour, _ := reopened.Time(5); hour != At(tc.hour5, 0) {
 				t.Fatalf("hour of chat 5 %d, want %d", hour, tc.hour5)
 			}
 
@@ -565,11 +634,11 @@ func TestMeet_SubscribesAChatSeenForTheFirstTime(t *testing.T) {
 	if err != nil || !met {
 		t.Fatalf("first meet: met=%v err=%v", met, err)
 	}
-	if hour, ok := s.Hour(42); !ok || hour != DefaultHour {
+	if hour, ok := s.Time(42); !ok || hour != DefaultTime {
 		t.Fatalf("hour=%d ok=%v, want subscribed at %d", hour, ok, DefaultHour)
 	}
 
-	if _, ok := reopen(t, path).Hour(42); !ok {
+	if _, ok := reopen(t, path).Time(42); !ok {
 		t.Fatal("the subscription must survive a restart")
 	}
 }
@@ -579,7 +648,7 @@ func TestMeet_KeepsTheHourOfASubscriber(t *testing.T) {
 	if _, err := s.Add(42); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetHour(42, 9); err != nil {
+	if err := s.SetTime(42, At(9, 0)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -587,7 +656,7 @@ func TestMeet_KeepsTheHourOfASubscriber(t *testing.T) {
 	if err != nil || met {
 		t.Fatalf("meet of a subscriber: met=%v err=%v", met, err)
 	}
-	if hour, _ := s.Hour(42); hour != 9 {
+	if hour, _ := s.Time(42); hour != At(9, 0) {
 		t.Fatalf("hour %d, want 9", hour)
 	}
 }
@@ -606,7 +675,7 @@ func TestMeet_RespectsUnsubscribe_AlsoAfterRestart(t *testing.T) {
 		if err != nil || met {
 			t.Fatalf("%s: meet: met=%v err=%v", name, met, err)
 		}
-		if _, ok := store.Hour(42); ok {
+		if _, ok := store.Time(42); ok {
 			t.Fatalf("%s: an unsubscribed chat must stay out", name)
 		}
 	}
@@ -634,7 +703,7 @@ func TestAdd_SubscribesAgainAfterUnsubscribe(t *testing.T) {
 	}
 
 	restarted := reopen(t, path)
-	if _, ok := restarted.Hour(42); !ok {
+	if _, ok := restarted.Time(42); !ok {
 		t.Fatal("subscribed again, it must stay subscribed after a restart")
 	}
 	// Unsubscribing and subscribing again leaves no stale opt-out behind.
@@ -658,7 +727,7 @@ func TestDrop_UnsubscribesButLetsTheChatComeBack(t *testing.T) {
 	if dropped, err := s.Drop(42); err != nil || dropped {
 		t.Fatalf("second drop: dropped=%v err=%v", dropped, err)
 	}
-	if _, ok := reopen(t, path).Hour(42); ok {
+	if _, ok := reopen(t, path).Time(42); ok {
 		t.Fatal("a dropped chat must stay out after a restart")
 	}
 
@@ -695,7 +764,7 @@ func TestMeetRemoveDrop_RollBackWhenSaveFails(t *testing.T) {
 	if _, err := s.Meet(7); err == nil {
 		t.Fatal("meet: want a save error")
 	}
-	if _, ok := s.Hour(7); ok {
+	if _, ok := s.Time(7); ok {
 		t.Fatal("a failed meet must not stay in memory")
 	}
 
@@ -716,7 +785,7 @@ func TestMigrate_UpgradedGroupKeepsItsChoice(t *testing.T) {
 	if _, err := s.Add(subscribedGroup); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetHour(subscribedGroup, 15); err != nil {
+	if err := s.SetTime(subscribedGroup, At(15, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkDelivered("-2", today); err != nil {
@@ -737,13 +806,13 @@ func TestMigrate_UpgradedGroupKeepsItsChoice(t *testing.T) {
 		if met, err := store.Meet(optedOutSupergroup); err != nil || met {
 			t.Fatalf("%s: met=%v err=%v, the opted-out supergroup must stay out", name, met, err)
 		}
-		if hour, ok := store.Hour(subscribedSupergroup); !ok || hour != 15 {
+		if hour, ok := store.Time(subscribedSupergroup); !ok || hour != At(15, 0) {
 			t.Fatalf("%s: hour=%d subscribed=%v, want the supergroup at 15", name, hour, ok)
 		}
 		if !store.Delivered("-1002", today) {
 			t.Fatalf("%s: the supergroup must keep today's delivery", name)
 		}
-		if _, ok := store.Hour(subscribedGroup); ok {
+		if _, ok := store.Time(subscribedGroup); ok {
 			t.Fatalf("%s: the old id must be gone", name)
 		}
 	}
@@ -782,10 +851,10 @@ func TestMigrate_RollsBackWhenSaveFails(t *testing.T) {
 	if _, err := s.Migrate(-1, -1001); err == nil {
 		t.Fatal("want a save error")
 	}
-	if _, ok := s.Hour(-1); !ok {
+	if _, ok := s.Time(-1); !ok {
 		t.Fatal("a failed migrate must keep the old id")
 	}
-	if _, ok := s.Hour(-1001); ok {
+	if _, ok := s.Time(-1001); ok {
 		t.Fatal("a failed migrate must not subscribe the new id")
 	}
 }
@@ -797,10 +866,10 @@ func TestOpen_FileWithoutOptOutsLoadsUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if hour, ok := s.Hour(5); !ok || hour != 9 {
+	if hour, ok := s.Time(5); !ok || hour != At(9, 0) {
 		t.Fatalf("chat 5: hour=%d ok=%v, want 9", hour, ok)
 	}
-	if hour, ok := s.Hour(30); !ok || hour != DefaultHour {
+	if hour, ok := s.Time(30); !ok || hour != DefaultTime {
 		t.Fatalf("chat 30: hour=%d ok=%v, want %d", hour, ok, DefaultHour)
 	}
 	if !s.Delivered("5", today) {
@@ -829,5 +898,71 @@ func TestSave_KeepsChatsReadableByThePreviousBuild(t *testing.T) {
 	}
 	if want := []int64{5}; !reflect.DeepEqual(old.Chats, want) {
 		t.Fatalf("chats in file %v, want %v", old.Chats, want)
+	}
+}
+
+// A file written before minutes existed keeps every chat at its hour, :00.
+func TestOpen_FileWithoutMinutesLoadsEveryChatAtItsHourSharp(t *testing.T) {
+	s, err := Open(writeFile(t, `{"chats":[5,30,31],"hours":{"5":9,"31":23}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for chatID, want := range map[int64]int{5: At(9, 0), 30: At(11, 0), 31: At(23, 0)} {
+		if got, ok := s.Time(chatID); !ok || got != want {
+			t.Errorf("chat %d: time=%s ok=%v, want %s", chatID, Format(got), ok, Format(want))
+		}
+	}
+	if got := s.Due(At(9, 0), today); !reflect.DeepEqual(got, []int64{5}) {
+		t.Errorf("due at 09:00 %v, want [5]", got)
+	}
+}
+
+func TestSetTime_MinutesOfTheDefaultHourSurviveARestart(t *testing.T) {
+	s, path := openTemp(t)
+	for chatID, at := range map[int64]int{1: At(11, 5), 2: At(4, 0), 3: At(23, 55), 4: At(11, 0)} {
+		if _, err := s.Add(chatID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetTime(chatID, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reopened := reopen(t, path)
+	for chatID, want := range map[int64]int{1: At(11, 5), 2: At(4, 0), 3: At(23, 55), 4: At(11, 0)} {
+		if got, _ := reopened.Time(chatID); got != want {
+			t.Errorf("chat %d: time=%s, want %s", chatID, Format(got), Format(want))
+		}
+	}
+}
+
+func TestOpen_IgnoresStrayMinutes(t *testing.T) {
+	s, err := Open(writeFile(t, `{"chats":[1,2,3],"hours":{"1":9,"2":9},"minutes":{"1":30,"2":7,"3":99,"4":30}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for chatID, want := range map[int64]int{1: At(9, 30), 2: At(9, 0), 3: At(11, 0)} {
+		if got, _ := s.Time(chatID); got != want {
+			t.Errorf("chat %d: time=%s, want %s", chatID, Format(got), Format(want))
+		}
+	}
+	if _, ok := s.Time(4); ok {
+		t.Error("a minute entry must not subscribe chat 4")
+	}
+}
+
+func TestOpen_BadMinutesKey(t *testing.T) {
+	if _, err := Open(writeFile(t, `{"chats":[1],"minutes":{"abc":30}}`)); err == nil {
+		t.Fatal("want an error for a chat id that is not a number")
+	}
+}
+
+func TestFormat(t *testing.T) {
+	for at, want := range map[int]string{At(9, 30): "09:30", At(23, 55): "23:55", MinTime: "04:00", DefaultTime: "11:00"} {
+		if got := Format(at); got != want {
+			t.Errorf("Format(%d)=%q, want %q", at, got, want)
+		}
 	}
 }

@@ -19,8 +19,12 @@ const (
 	callbackAbout       = "about"
 	callbackSettings    = "settings"
 	callbackMenu        = "menu"
-	// callbackHourPrefix is followed by the Moscow hour, like "hour:9".
+	// callbackHourPrefix is followed by the Moscow hour, like "hour:9". It
+	// opens the minutes of that hour and saves nothing.
 	callbackHourPrefix = "hour:"
+	// callbackTimePrefix is followed by the delivery time in minutes since
+	// midnight, like "time:570" for 09:30. It saves the time.
+	callbackTimePrefix = "time:"
 
 	// RepositoryURL is the public code of the project.
 	RepositoryURL = "https://github.com/Po-sudo-moika/Daily-Leetcode-Ping"
@@ -36,6 +40,12 @@ const (
 
 	saveFailedText = "⚠️ Не получилось сохранить выбор. Попробуй ещё раз чуть позже."
 
+	// adminsOnlyText is the note a member who is not an admin gets in a group
+	// when pressing a button that changes the subscription or the time.
+	adminsOnlyText = "Менять это в группе могут только админы."
+
+	adminCheckFailedText = "Не получилось проверить, админ ли ты. Попробуй ещё раз чуть позже."
+
 	aboutText = "ℹ️ Daily LeetCode Ping — небольшой бот, который каждый день в выбранное время " +
 		"(по умолчанию в 11:00 МСК) присылает задачу дня с leetcode.com: название, сложность и ссылку.\n\n" +
 		"Код открыт — смотри на GitHub."
@@ -44,12 +54,13 @@ const (
 
 	// What people see in the bot's profile before they press Start. Telegram
 	// limits: description 512 characters, short description 120.
-	botDescription = "Присылаю задачу дня с LeetCode каждый день в удобный час (по умолчанию в 11:00 по Москве): " +
+	botDescription = "Присылаю задачу дня с LeetCode каждый день в удобное время (по умолчанию в 11:00 по Москве): " +
 		"название, сложность и ссылку.\n\nНажми «Начать» — подписка включится сама, откроется меню: " +
-		"там можно выбрать час рассылки и отписаться. Меня можно добавить и в группу или канал."
-	botShortDescription = "Задача дня с LeetCode каждый день в удобный час по Москве"
+		"там можно выбрать время рассылки и отписаться. Меня можно добавить и в группу или канал."
+	botShortDescription = "Задача дня с LeetCode каждый день в удобное время по Москве"
 
-	hoursPerRow = 4
+	hoursPerRow   = 4
+	minutesPerRow = 4
 )
 
 // screen is what the one menu message shows: its text and its buttons.
@@ -70,6 +81,9 @@ type Menu struct {
 	api         API
 	subscribers Subscribers
 	fixedChats  []string
+	// ownerID is the Telegram user id of the bot's owner; 0 means /chats
+	// answers nobody.
+	ownerID int64
 }
 
 // NewMenu returns the menu. fixedChats are the chats from config.toml, as
@@ -78,17 +92,27 @@ func NewMenu(api API, subscribers Subscribers, fixedChats []string) *Menu {
 	return &Menu{api: api, subscribers: subscribers, fixedChats: fixedChats}
 }
 
+// WithOwner sets the Telegram user id of the bot's owner, the only person
+// /chats answers. It returns the menu.
+func (m *Menu) WithOwner(userID int64) *Menu {
+	m.ownerID = userID
+
+	return m
+}
+
 // Register wires the menu handlers into the bot.
 func (m *Menu) Register(b *bot.Bot) {
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool { return update.MyChatMember != nil }, m.HandleMyChatMember)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommandStartOnly, m.HandleStart)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "settings", bot.MatchTypeCommandStartOnly, m.HandleSettingsCommand)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "chats", bot.MatchTypeCommandStartOnly, m.HandleChats)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackSubscribe, bot.MatchTypeExact, m.HandleSubscribe)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackUnsubscribe, bot.MatchTypeExact, m.HandleUnsubscribe)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackAbout, bot.MatchTypeExact, m.HandleAbout)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackSettings, bot.MatchTypeExact, m.HandleSettings)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackMenu, bot.MatchTypeExact, m.HandleBack)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackHourPrefix, bot.MatchTypePrefix, m.HandleHour)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackTimePrefix, bot.MatchTypePrefix, m.HandleTime)
 }
 
 // Setup publishes the bot's profile: the text shown before Start and the
@@ -99,7 +123,7 @@ func (m *Menu) Setup(ctx context.Context) error {
 
 	_, err := m.api.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: []models.BotCommand{
 		{Command: "start", Description: "Открыть меню"},
-		{Command: "settings", Description: "Настройки: час рассылки"},
+		{Command: "settings", Description: "Настройки: время рассылки"},
 	}})
 	if err != nil {
 		errs = append(errs, fmt.Errorf("set commands: %w", err))
@@ -138,7 +162,7 @@ func (m *Menu) HandleSettingsCommand(ctx context.Context, _ *bot.Bot, update *mo
 }
 
 func (m *Menu) HandleSubscribe(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	t, ok := m.ackCallback(ctx, update)
+	t, ok := m.ackCallback(ctx, update, adminOnly)
 	if !ok {
 		return
 	}
@@ -149,12 +173,12 @@ func (m *Menu) HandleSubscribe(ctx context.Context, _ *bot.Bot, update *models.U
 		return
 	}
 
-	hour, _ := m.subscribers.Hour(t.chatID)
-	m.show(ctx, t, mainScreen(subscribedText(hour)))
+	at, _ := m.subscribers.Time(t.chatID)
+	m.show(ctx, t, mainScreen(subscribedText(at)))
 }
 
 func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	t, ok := m.ackCallback(ctx, update)
+	t, ok := m.ackCallback(ctx, update, adminOnly)
 	if !ok {
 		return
 	}
@@ -173,7 +197,7 @@ func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models
 }
 
 func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	t, ok := m.ackCallback(ctx, update)
+	t, ok := m.ackCallback(ctx, update, anyone)
 	if !ok {
 		return
 	}
@@ -182,7 +206,7 @@ func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Updat
 }
 
 func (m *Menu) HandleSettings(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	t, ok := m.ackCallback(ctx, update)
+	t, ok := m.ackCallback(ctx, update, anyone)
 	if !ok {
 		return
 	}
@@ -192,7 +216,7 @@ func (m *Menu) HandleSettings(ctx context.Context, _ *bot.Bot, update *models.Up
 
 // HandleBack returns from the about or settings screen to the menu.
 func (m *Menu) HandleBack(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	t, ok := m.ackCallback(ctx, update)
+	t, ok := m.ackCallback(ctx, update, anyone)
 	if !ok {
 		return
 	}
@@ -200,61 +224,119 @@ func (m *Menu) HandleBack(ctx context.Context, _ *bot.Bot, update *models.Update
 	m.show(ctx, t, m.welcomeScreen(t.chatID))
 }
 
-// HandleHour saves the delivery hour of the pressed button and shows the
-// settings screen again with the new choice marked.
+// HandleHour shows the minutes of the pressed hour. Nothing is saved until a
+// minute is pressed.
 func (m *Menu) HandleHour(ctx context.Context, _ *bot.Bot, update *models.Update) {
-	t, ok := m.ackCallback(ctx, update)
+	t, ok := m.ackCallback(ctx, update, adminOnly)
 	if !ok {
 		return
 	}
 
 	hour, err := strconv.Atoi(strings.TrimPrefix(update.CallbackQuery.Data, callbackHourPrefix))
+	if _, subscribed := m.subscribers.Time(t.chatID); err != nil || !subscribed || hour < subscribers.MinHour || hour > subscribers.MaxHour {
+		// A stale or made-up button: show the screen as it really is.
+		m.show(ctx, t, m.settingsScreen(t.chatID, ""))
+		return
+	}
+
+	m.show(ctx, t, m.minutesScreen(t.chatID, hour))
+}
+
+// HandleTime saves the delivery time of the pressed button and shows the
+// settings screen again with the new choice marked.
+func (m *Menu) HandleTime(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	t, ok := m.ackCallback(ctx, update, adminOnly)
+	if !ok {
+		return
+	}
+
+	at, err := strconv.Atoi(strings.TrimPrefix(update.CallbackQuery.Data, callbackTimePrefix))
 	if err == nil {
-		err = m.subscribers.SetHour(t.chatID, hour)
+		err = m.subscribers.SetTime(t.chatID, at)
 	}
 
 	switch {
 	case err == nil:
-		m.show(ctx, t, m.settingsScreen(t.chatID, "✅ Сохранено: каждый день в "+hourLabel(hour)+" (МСК)."))
-	case errors.Is(err, subscribers.ErrNotSubscribed), errors.Is(err, subscribers.ErrInvalidHour), isBadHour(err):
+		m.show(ctx, t, m.settingsScreen(t.chatID, "✅ Сохранено: каждый день в "+subscribers.Format(at)+" (МСК)."))
+	case errors.Is(err, subscribers.ErrNotSubscribed), errors.Is(err, subscribers.ErrInvalidTime), isBadNumber(err):
 		// A stale or made-up button: show the screen as it really is.
 		m.show(ctx, t, m.settingsScreen(t.chatID, ""))
 	default:
-		log.Errorf("error while saving hour of %d: %v", t.chatID, err)
+		log.Errorf("error while saving time of %d: %v", t.chatID, err)
 		m.show(ctx, t, m.settingsScreen(t.chatID, saveFailedText))
 	}
 }
 
-// isBadHour reports a callback whose hour is not a number.
-func isBadHour(err error) bool {
+// isBadNumber reports a callback whose value is not a number.
+func isBadNumber(err error) bool {
 	var numErr *strconv.NumError
 
 	return errors.As(err, &numErr)
 }
 
-// ackCallback stops the button spinner and returns the menu message of the
-// pressed button. It reports false when the update has no usable chat.
-func (m *Menu) ackCallback(ctx context.Context, update *models.Update) (target, bool) {
+// Who may press a button: anyone, or only the admins of a group.
+const (
+	anyone    = false
+	adminOnly = true
+)
+
+// ackCallback answers the button press, which stops the spinner, and returns
+// the menu message of the pressed button. It reports false when the update has
+// no usable chat, or when the button is adminOnly, the chat is a group or a
+// supergroup and the person who pressed it is not an admin there: that person
+// gets a short note instead, and nothing changes. Private chats and channels
+// have no such limit.
+func (m *Menu) ackCallback(ctx context.Context, update *models.Update, only bool) (target, bool) {
 	query := update.CallbackQuery
 	if query == nil {
 		return target{}, false
 	}
 
-	if _, err := m.api.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID}); err != nil {
-		log.Errorf("error while answering callback query: %v", err)
-	}
-
 	// Telegram sends an inaccessible message when the menu message is too old.
 	// It still carries the chat and the message id, so the buttons keep
 	// working: show tries the edit and falls back to a new menu.
+	var t target
+	var chatType models.ChatType
+	found := true
 	switch {
 	case query.Message.Message != nil:
-		return target{chatID: query.Message.Message.Chat.ID, messageID: query.Message.Message.ID}, true
+		t = target{chatID: query.Message.Message.Chat.ID, messageID: query.Message.Message.ID}
+		chatType = query.Message.Message.Chat.Type
 	case query.Message.InaccessibleMessage != nil:
-		return target{chatID: query.Message.InaccessibleMessage.Chat.ID, messageID: query.Message.InaccessibleMessage.MessageID}, true
+		t = target{chatID: query.Message.InaccessibleMessage.Chat.ID, messageID: query.Message.InaccessibleMessage.MessageID}
+		chatType = query.Message.InaccessibleMessage.Chat.Type
+	default:
+		found = false
 	}
 
-	return target{}, false
+	note := ""
+	if found && only && (chatType == models.ChatTypeGroup || chatType == models.ChatTypeSupergroup) {
+		note = m.adminNote(ctx, t.chatID, query.From.ID)
+	}
+
+	if _, err := m.api.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID, Text: note}); err != nil {
+		log.Errorf("error while answering callback query: %v", err)
+	}
+
+	return t, found && note == ""
+}
+
+// adminNote returns "" when the user is an admin (creator or administrator) of
+// the group, and otherwise the note to show. When Telegram cannot say, the user
+// is not let through: nothing changes, and they are asked to try again.
+func (m *Menu) adminNote(ctx context.Context, chatID, userID int64) string {
+	member, err := m.api.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: chatID, UserID: userID})
+	if err != nil {
+		log.Errorf("error while checking whether user %d is an admin of chat %d: %v", userID, chatID, err)
+		return adminCheckFailedText
+	}
+
+	switch member.Type {
+	case models.ChatMemberTypeOwner, models.ChatMemberTypeAdministrator:
+		return ""
+	}
+
+	return adminsOnlyText
 }
 
 // show puts the screen into the menu message, in place. If Telegram refuses
@@ -269,7 +351,7 @@ func (m *Menu) show(ctx context.Context, t target, s screen) {
 
 	switch {
 	case err == nil, isNotModified(err):
-		// Pressing a button that changes nothing (the same hour again) is fine.
+		// Pressing a button that changes nothing is fine.
 	case errors.Is(err, bot.ErrorBadRequest):
 		log.Infof("menu message %d of chat %d can't be edited, sending a new one: %v", t.messageID, t.chatID, err)
 		m.send(ctx, t.chatID, s)
@@ -294,7 +376,7 @@ func (m *Menu) send(ctx context.Context, chatID int64, s screen) {
 }
 
 func (m *Menu) settingsScreen(chatID int64, note string) screen {
-	hour, subscribed := m.subscribers.Hour(chatID)
+	at, subscribed := m.subscribers.Time(chatID)
 	if !subscribed {
 		return screen{
 			text: withNote(note, settingsNotSubscribedText),
@@ -306,8 +388,9 @@ func (m *Menu) settingsScreen(chatID int64, note string) screen {
 	}
 
 	text := fmt.Sprintf("⚙️ Настройки\n\nВо сколько присылать задачу дня? Время московское (МСК, UTC+3). "+
-		"Сейчас: %s.\n\nЗадача на LeetCode меняется в 03:00 МСК, поэтому доступны часы с %s до %s.",
-		hourLabel(hour), hourLabel(subscribers.MinHour), hourLabel(subscribers.MaxHour))
+		"Сейчас: %s.\n\nСначала выбери час, потом минуты (с шагом %d минут). "+
+		"Задача на LeetCode меняется в 03:00 МСК, поэтому доступно время с %s до %s.",
+		subscribers.Format(at), subscribers.MinuteStep, subscribers.Format(subscribers.MinTime), subscribers.Format(subscribers.MaxTime))
 
 	var rows [][]models.InlineKeyboardButton
 	for h := subscribers.MinHour; h <= subscribers.MaxHour; h++ {
@@ -316,8 +399,8 @@ func (m *Menu) settingsScreen(chatID int64, note string) screen {
 		}
 
 		label := hourLabel(h)
-		if h == hour {
-			label = "✅ " + label
+		if h == at/60 {
+			label = "✅ " + subscribers.Format(at)
 		}
 		last := len(rows) - 1
 		rows[last] = append(rows[last], models.InlineKeyboardButton{Text: label, CallbackData: callbackHourPrefix + strconv.Itoa(h)})
@@ -325,6 +408,32 @@ func (m *Menu) settingsScreen(chatID int64, note string) screen {
 	rows = append(rows, []models.InlineKeyboardButton{backButton()})
 
 	return screen{text: withNote(note, text), markup: &models.InlineKeyboardMarkup{InlineKeyboard: rows}}
+}
+
+// minutesScreen offers the minutes of one hour, with the current choice marked
+// when it falls in that hour. Its Back button returns to the hours.
+func (m *Menu) minutesScreen(chatID int64, hour int) screen {
+	at, _ := m.subscribers.Time(chatID)
+
+	text := fmt.Sprintf("⚙️ Настройки\n\nВыбери минуты для %02d:__ (МСК). Сейчас: %s.", hour, subscribers.Format(at))
+
+	var rows [][]models.InlineKeyboardButton
+	for minute := 0; minute < 60; minute += subscribers.MinuteStep {
+		if (minute/subscribers.MinuteStep)%minutesPerRow == 0 {
+			rows = append(rows, nil)
+		}
+
+		choice := subscribers.At(hour, minute)
+		label := subscribers.Format(choice)
+		if choice == at {
+			label = "✅ " + label
+		}
+		last := len(rows) - 1
+		rows[last] = append(rows[last], models.InlineKeyboardButton{Text: label, CallbackData: callbackTimePrefix + strconv.Itoa(choice)})
+	}
+	rows = append(rows, []models.InlineKeyboardButton{{Text: "⬅️ Назад", CallbackData: callbackSettings}})
+
+	return screen{text: text, markup: &models.InlineKeyboardMarkup{InlineKeyboard: rows}}
 }
 
 func withNote(note, text string) string {
@@ -338,12 +447,12 @@ func withNote(note, text string) string {
 // welcomeScreen is the menu with the chat's subscription state. A fixed chat
 // without a subscription of its own still gets the post, and is told so.
 func (m *Menu) welcomeScreen(chatID int64) screen {
-	hour, subscribed := m.subscribers.Hour(chatID)
+	at, subscribed := m.subscribers.Time(chatID)
 	if !subscribed && m.isFixed(chatID) {
 		return mainScreen(welcomeWith(fixedStatus()))
 	}
 
-	return mainScreen(welcomeFor(hour, subscribed))
+	return mainScreen(welcomeFor(at, subscribed))
 }
 
 // isFixed reports whether the chat is one of the chats from config.toml.
@@ -357,12 +466,12 @@ func (m *Menu) isFixed(chatID int64) bool {
 	return false
 }
 
-// welcomeFor is the menu text for a chat that is subscribed at hour, or is not
-// subscribed.
-func welcomeFor(hour int, subscribed bool) string {
+// welcomeFor is the menu text for a chat that is subscribed at time at, or is
+// not subscribed.
+func welcomeFor(at int, subscribed bool) string {
 	status := notSubscribedStatus
 	if subscribed {
-		status = fmt.Sprintf("✅ Сейчас подписка включена: каждый день в %s (МСК).", hourLabel(hour))
+		status = fmt.Sprintf("✅ Сейчас подписка включена: каждый день в %s (МСК).", subscribers.Format(at))
 	}
 
 	return welcomeWith(status)
@@ -373,19 +482,20 @@ func welcomeWith(status string) string {
 }
 
 // fixedStatus is the state of a fixed chat without a subscription of its own:
-// it gets the post anyway, at the fixed hour.
+// it gets the post anyway, at the fixed time.
 func fixedStatus() string {
 	return fmt.Sprintf("✅ Этот чат в списке рассылки бота: задача дня приходит сюда каждый день в %s (МСК).",
-		hourLabel(fixedChatsHour))
+		subscribers.Format(fixedChatsTime))
 }
 
-func subscribedText(hour int) string {
+func subscribedText(at int) string {
 	return fmt.Sprintf("✅ Подписка включена. Задача дня будет приходить каждый день в %s (МСК). "+
-		"Время можно поменять в настройках.", hourLabel(hour))
+		"Время можно поменять в настройках.", subscribers.Format(at))
 }
 
+// hourLabel is the label of an hour button, like "09:00".
 func hourLabel(hour int) string {
-	return fmt.Sprintf("%02d:00", hour)
+	return subscribers.Format(subscribers.At(hour, 0))
 }
 
 func backButton() models.InlineKeyboardButton {

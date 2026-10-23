@@ -24,6 +24,18 @@ type fakeAPI struct {
 	// chatIDs is the id GetChat finds for a chat name; other names are not
 	// found.
 	chatIDs map[string]int64
+	// chatInfos is what GetChat returns for a chat id or name, as printed by
+	// fmt.Sprint; other chats are not found.
+	chatInfos map[string]models.ChatFullInfo
+	// getChatErr is returned by GetChat for a chat id or name, as printed by
+	// fmt.Sprint, when set.
+	getChatErr map[string]error
+	// members is the status GetChatMember returns for a user, whatever the
+	// chat; other users are plain members. memberErr is returned instead,
+	// when set.
+	members   map[int64]models.ChatMemberType
+	memberErr error
+	asked     []*bot.GetChatMemberParams
 	// sendErr returns an error for a given chat id, when set.
 	sendErr map[any]error
 	// editErr is returned by every EditMessageText, when set.
@@ -93,12 +105,35 @@ func (f *fakeAPI) GetChat(_ context.Context, params *bot.GetChatParams) (*models
 	defer f.mu.Unlock()
 
 	f.gotChats = append(f.gotChats, params)
+	key := fmt.Sprint(params.ChatID)
+	if err := f.getChatErr[key]; err != nil {
+		return nil, err
+	}
+	if info, ok := f.chatInfos[key]; ok {
+		return &info, nil
+	}
 	name, _ := params.ChatID.(string)
 	if id, ok := f.chatIDs[name]; ok {
 		return &models.ChatFullInfo{ID: id}, nil
 	}
 
 	return nil, fmt.Errorf("%w, Bad Request: chat not found", bot.ErrorBadRequest)
+}
+
+func (f *fakeAPI) GetChatMember(_ context.Context, params *bot.GetChatMemberParams) (*models.ChatMember, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.asked = append(f.asked, params)
+	if f.memberErr != nil {
+		return nil, f.memberErr
+	}
+	status, ok := f.members[params.UserID]
+	if !ok {
+		status = models.ChatMemberTypeMember
+	}
+
+	return &models.ChatMember{Type: status}, nil
 }
 
 func (f *fakeAPI) recipients() []any {
@@ -110,36 +145,36 @@ func (f *fakeAPI) recipients() []any {
 	return out
 }
 
-// fakeSubscribers keeps the delivery hour per chat and the last day each
+// fakeSubscribers keeps the delivery time per chat and the last day each
 // chat got the post, like the real store.
 type fakeSubscribers struct {
-	hours     map[int64]int
+	times     map[int64]int
 	optedOut  map[int64]bool
 	delivered map[string]string
 	failWrite error
 }
 
-// subscribed returns a fake with these chats at the default hour.
+// subscribed returns a fake with these chats at the default time.
 func subscribed(chats ...int64) *fakeSubscribers {
 	f := &fakeSubscribers{}
 	for _, chatID := range chats {
-		f.set(chatID, subscribers.DefaultHour)
+		f.set(chatID, subscribers.DefaultTime)
 	}
 
 	return f
 }
 
-func (f *fakeSubscribers) set(chatID int64, hour int) {
-	if f.hours == nil {
-		f.hours = map[int64]int{}
+func (f *fakeSubscribers) set(chatID int64, at int) {
+	if f.times == nil {
+		f.times = map[int64]int{}
 	}
-	f.hours[chatID] = hour
+	f.times[chatID] = at
 }
 
 // chats returns the subscribed chat ids in ascending order.
 func (f *fakeSubscribers) chats() []int64 {
 	var out []int64
-	for chatID := range f.hours {
+	for chatID := range f.times {
 		out = append(out, chatID)
 	}
 	slices.Sort(out)
@@ -151,10 +186,10 @@ func (f *fakeSubscribers) Add(chatID int64) (bool, error) {
 	if f.failWrite != nil {
 		return false, f.failWrite
 	}
-	if _, ok := f.hours[chatID]; ok {
+	if _, ok := f.times[chatID]; ok {
 		return false, nil
 	}
-	f.set(chatID, subscribers.DefaultHour)
+	f.set(chatID, subscribers.DefaultTime)
 	delete(f.optedOut, chatID)
 
 	return true, nil
@@ -164,10 +199,10 @@ func (f *fakeSubscribers) Meet(chatID int64) (bool, error) {
 	if f.failWrite != nil {
 		return false, f.failWrite
 	}
-	if _, ok := f.hours[chatID]; ok || f.optedOut[chatID] {
+	if _, ok := f.times[chatID]; ok || f.optedOut[chatID] {
 		return false, nil
 	}
-	f.set(chatID, subscribers.DefaultHour)
+	f.set(chatID, subscribers.DefaultTime)
 
 	return true, nil
 }
@@ -176,10 +211,10 @@ func (f *fakeSubscribers) Drop(chatID int64) (bool, error) {
 	if f.failWrite != nil {
 		return false, f.failWrite
 	}
-	if _, ok := f.hours[chatID]; !ok {
+	if _, ok := f.times[chatID]; !ok {
 		return false, nil
 	}
-	delete(f.hours, chatID)
+	delete(f.times, chatID)
 
 	return true, nil
 }
@@ -188,16 +223,16 @@ func (f *fakeSubscribers) Migrate(from, to int64) (bool, error) {
 	if f.failWrite != nil {
 		return false, f.failWrite
 	}
-	hour, subscribed := f.hours[from]
+	at, subscribed := f.times[from]
 	if !subscribed && !f.optedOut[from] {
 		return false, nil
 	}
-	delete(f.hours, from)
+	delete(f.times, from)
 	delete(f.optedOut, from)
-	delete(f.hours, to)
+	delete(f.times, to)
 	delete(f.optedOut, to)
 	if subscribed {
-		f.set(to, hour)
+		f.set(to, at)
 	} else {
 		f.optedOut[to] = true
 	}
@@ -213,45 +248,59 @@ func (f *fakeSubscribers) Remove(chatID int64) (bool, error) {
 		f.optedOut = map[int64]bool{}
 	}
 	f.optedOut[chatID] = true
-	if _, ok := f.hours[chatID]; !ok {
+	if _, ok := f.times[chatID]; !ok {
 		return false, nil
 	}
-	delete(f.hours, chatID)
+	delete(f.times, chatID)
 
 	return true, nil
 }
 
-func (f *fakeSubscribers) Hour(chatID int64) (int, bool) {
-	hour, ok := f.hours[chatID]
+func (f *fakeSubscribers) Time(chatID int64) (int, bool) {
+	at, ok := f.times[chatID]
 
-	return hour, ok
+	return at, ok
 }
 
-func (f *fakeSubscribers) SetHour(chatID int64, hour int) error {
-	if hour < subscribers.MinHour || hour > subscribers.MaxHour {
-		return subscribers.ErrInvalidHour
+func (f *fakeSubscribers) SetTime(chatID int64, at int) error {
+	if at < subscribers.MinTime || at > subscribers.MaxTime || at%subscribers.MinuteStep != 0 {
+		return subscribers.ErrInvalidTime
 	}
-	if _, ok := f.hours[chatID]; !ok {
+	if _, ok := f.times[chatID]; !ok {
 		return subscribers.ErrNotSubscribed
 	}
 	if f.failWrite != nil {
 		return f.failWrite
 	}
-	f.hours[chatID] = hour
+	f.times[chatID] = at
 
 	return nil
 }
 
-func (f *fakeSubscribers) Due(hour int, day string) []int64 {
+func (f *fakeSubscribers) Due(now int, day string) []int64 {
 	var out []int64
-	for chatID, h := range f.hours {
-		if h <= hour && !f.Delivered(strconv.FormatInt(chatID, 10), day) {
+	for chatID, at := range f.times {
+		if at <= now && !f.Delivered(strconv.FormatInt(chatID, 10), day) {
 			out = append(out, chatID)
 		}
 	}
 	slices.Sort(out)
 
 	return out
+}
+
+func (f *fakeSubscribers) Known() []int64 {
+	out := f.chats()
+	for chatID := range f.optedOut {
+		out = append(out, chatID)
+	}
+	slices.Sort(out)
+
+	return out
+}
+
+func (f *fakeSubscribers) LastDelivered(chat string) string {
+	return f.delivered[chat]
 }
 
 func (f *fakeSubscribers) Delivered(chat, day string) bool {
