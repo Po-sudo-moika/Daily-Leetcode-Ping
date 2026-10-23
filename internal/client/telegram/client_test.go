@@ -118,9 +118,6 @@ func TestSendToFixedChats_SubscribedChatBeforeItsHourKeepsItsPostDue(t *testing.
 	}
 }
 
-var msk = time.FixedZone("MSK", 3*60*60)
-
-// at is a Moscow time on a day of October 2026.
 // A start-up send that fails before the chat's time does not pause the chat:
 // a fixed chat that is also a subscriber at 09:30 still gets its post at 09:30.
 func TestSendToFixedChats_FailureBeforeItsTimeDoesNotDelayIt(t *testing.T) {
@@ -139,6 +136,9 @@ func TestSendToFixedChats_FailureBeforeItsTimeDoesNotDelayIt(t *testing.T) {
 	}
 }
 
+var msk = time.FixedZone("MSK", 3*60*60)
+
+// at is a Moscow time on a day of October 2026.
 func at(day, hour, minute int) time.Time {
 	return time.Date(2026, time.October, day, hour, minute, 0, 0, msk)
 }
