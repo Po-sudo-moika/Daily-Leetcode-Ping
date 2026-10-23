@@ -72,8 +72,12 @@ func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question d
 	var errs []error
 	for _, chat := range c.chats {
 		err := c.sendMessage(ctx, chat, text)
-		c.noteSend(chat, now, err)
-		if at, _ := c.deliveryTime(chat); err == nil && subscribers.Now(now) >= at {
+		at, _ := c.deliveryTime(chat)
+		timeHasCome := subscribers.Now(now) >= at
+		if err == nil || timeHasCome {
+			c.noteSend(chat, now, err)
+		}
+		if err == nil && timeHasCome {
 			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
 		}
 	}

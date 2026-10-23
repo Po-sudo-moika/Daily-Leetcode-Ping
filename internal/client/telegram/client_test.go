@@ -121,6 +121,24 @@ func TestSendToFixedChats_SubscribedChatBeforeItsHourKeepsItsPostDue(t *testing.
 var msk = time.FixedZone("MSK", 3*60*60)
 
 // at is a Moscow time on a day of October 2026.
+// A start-up send that fails before the chat's time does not pause the chat:
+// a fixed chat that is also a subscriber at 09:30 still gets its post at 09:30.
+func TestSendToFixedChats_FailureBeforeItsTimeDoesNotDelayIt(t *testing.T) {
+	subs := subscribed(5)
+	subs.set(5, subscribers.At(9, 30))
+	api := &fakeAPI{sendErr: map[any]error{"5": context.DeadlineExceeded}}
+	c, _ := New(api, []string{"5"}, subs)
+
+	if err := c.SendToFixedChats(context.Background(), at(11, 9, 10), question); err != nil {
+		t.Fatal(err)
+	}
+
+	api.sendErr = nil
+	if got, want := round(t, c, api, at(11, 9, 30)), []any{int64(5)}; !slices.Equal(got, want) {
+		t.Fatalf("09:30 sent to %v, want %v", got, want)
+	}
+}
+
 func at(day, hour, minute int) time.Time {
 	return time.Date(2026, time.October, day, hour, minute, 0, 0, msk)
 }
