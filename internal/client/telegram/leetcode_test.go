@@ -180,3 +180,23 @@ func TestSettingsCommand_AddressedToThisBotOnly(t *testing.T) {
 		t.Fatalf("/settings@OtherBot got an answer: %+v", api.sent)
 	}
 }
+
+func TestShowCommand_ForgetsALoginThePersonRemoved(t *testing.T) {
+	ctx := context.Background()
+	b, api, store, _ := newLinkBot(t, subscribed(), map[string]domain.Calendar{"Alice": {Username: "Alice"}})
+	if err := store.Set(10, "alice_tg", "Alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	// User 10 drops the @login and writes to the bot again.
+	b.ProcessUpdate(ctx, textUpdate(10, models.ChatTypePrivate, 10, "", "/leetcode"))
+	if link, _ := store.Get(10); link.Login != "" || link.LeetCode != "Alice" {
+		t.Fatalf("link of user 10 = %+v, want Alice with no login", link)
+	}
+
+	api.sent = nil
+	b.ProcessUpdate(ctx, textUpdate(-100, models.ChatTypeGroup, 20, "dave_tg", "/show @alice_tg"))
+	if len(api.sent) != 1 || api.sent[0].Text != notLinkedText("alice_tg", subscribers.Russian) {
+		t.Fatalf("reply to /show for a removed login: %+v", api.sent)
+	}
+}

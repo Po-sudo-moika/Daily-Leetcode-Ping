@@ -82,7 +82,7 @@ func refreshLogins(links Links) bot.Middleware {
 				from = &update.CallbackQuery.From
 			}
 
-			if from != nil && from.Username != "" {
+			if from != nil {
 				if err := links.Touch(from.ID, from.Username); err != nil {
 					log.Errorf("error while refreshing the login of user %d: %v", from.ID, err)
 				}
