@@ -3,17 +3,14 @@ name = "LeetcodePingService"
 version = "1.0.0"
 env = "production"
 
-# The bot token is NOT stored here. Set TELEGRAM_BOT_TOKEN (see README.md).
+# The bot token and the owner id are NOT stored here. Set TELEGRAM_BOT_TOKEN
+# and TELEGRAM_OWNER_ID (see README.md).
 [telegram]
 # Fixed recipients. They get the start-up post and the daily post,
 # in addition to every chat the bot is in (see README.md).
 telegramChats = [
 	"your chat id"
 ]
-# Telegram user id of the bot owner, the only person /chats answers. 0 = off.
-# Keep your real id in a local copy of this file, or in TELEGRAM_OWNER_ID
-# (environment or .env). Never commit it. See README.md.
-ownerId = 0
 
 [storage]
 # Where subscriptions are kept. Mount this folder as a Docker volume.

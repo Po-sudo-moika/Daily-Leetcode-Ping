@@ -29,12 +29,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ownerID, err := config.LoadOwnerID(".env", os.Getenv, conf.Telegram.OwnerID)
+	ownerID, err := config.LoadOwnerID(".env", os.Getenv)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if ownerID == 0 {
-		log.Println("Владелец бота не задан (telegram.ownerId или TELEGRAM_OWNER_ID): команда /chats отключена")
+		log.Println("Владелец бота не задан (TELEGRAM_OWNER_ID): команда /chats отключена")
 	}
 
 	store, err := subscribers.Open(conf.Storage.SubscribersPath)
@@ -65,8 +65,7 @@ func main() {
 		log.Fatalf("error while creating telegram client: %v", err)
 	}
 
-	// A failed fetch is not repeated for an hour, though the round runs every minute.
-	leetcodeClient := leetcode.NewBackoff(leetcode.New("https://leetcode.com"), time.Hour)
+	leetcodeClient := leetcode.New("https://leetcode.com")
 
 	if err := menu.Setup(ctx); err != nil {
 		// The bot still works without its profile text, so keep going.

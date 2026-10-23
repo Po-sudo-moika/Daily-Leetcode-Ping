@@ -8,12 +8,12 @@ import (
 
 const OwnerEnvName = "TELEGRAM_OWNER_ID"
 
-// LoadOwnerID returns the Telegram user id of the bot's owner. The
-// TELEGRAM_OWNER_ID environment variable wins, then the same entry in the .env
-// file at dotEnvPath, then telegram.ownerId from config.toml (configured). 0
-// means no owner is set, which turns /chats off. A value that is not a number
-// is an error; the message does not repeat the value.
-func LoadOwnerID(dotEnvPath string, getenv func(string) string, configured int64) (int64, error) {
+// LoadOwnerID returns the Telegram user id of the bot's owner from the
+// TELEGRAM_OWNER_ID environment variable. When the variable is empty, it falls
+// back to the .env file at dotEnvPath, like the bot token. 0 means no owner is
+// set, which turns /chats off. A value that is not a number is an error; the
+// message does not repeat the value.
+func LoadOwnerID(dotEnvPath string, getenv func(string) string) (int64, error) {
 	raw := strings.TrimSpace(getenv(OwnerEnvName))
 	if raw == "" {
 		values, err := readDotEnv(dotEnvPath)
@@ -24,7 +24,7 @@ func LoadOwnerID(dotEnvPath string, getenv func(string) string, configured int64
 	}
 
 	if raw == "" {
-		return configured, nil
+		return 0, nil
 	}
 
 	id, err := strconv.ParseInt(raw, 10, 64)

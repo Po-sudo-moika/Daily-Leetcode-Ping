@@ -22,10 +22,6 @@ type Service struct {
 
 type Telegram struct {
 	TelegramChats []string `toml:"telegramChats"`
-	// OwnerID is the Telegram user id of the bot's owner, the only person
-	// /chats answers. 0 means not set. The TELEGRAM_OWNER_ID environment
-	// variable or .env entry wins over it (see LoadOwnerID).
-	OwnerID int64 `toml:"ownerId"`
 }
 
 type Storage struct {
