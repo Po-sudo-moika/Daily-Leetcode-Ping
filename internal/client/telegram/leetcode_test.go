@@ -63,7 +63,7 @@ func newLinkBot(t *testing.T, subs *fakeSubscribers, calendars map[string]domain
 	}
 	lc := &fakeLeetCode{calendars: calendars}
 
-	options := append(BotOptions(subs, store), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
+	options := append(BotOptions(subs, store, nil), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	b, err := bot.New("123456:fake-token-for-tests", options...)
 	if err != nil {
 		t.Fatal(err)

@@ -13,7 +13,17 @@ import (
 	"sync"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/jsonfile"
+	"github.com/labstack/gommon/log"
 )
+
+// MaxLinks is a high safety cap on the stored links, one per Telegram user. A
+// real bot stays far below it. Past it Set refuses a new user with ErrFull, so a
+// flood of new users cannot grow the file without bound. A user who already
+// linked can still change their link.
+const MaxLinks = 50000
+
+// ErrFull means the store holds MaxLinks links and refuses a new user.
+var ErrFull = errors.New("links store is full")
 
 // Link is one person's link. Only the public LeetCode username is kept, never
 // a login token or cookie.
@@ -67,6 +77,11 @@ func Open(path string) (*Store, error) {
 func (s *Store) Set(userID int64, login, leetcode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if _, linked := s.users[userID]; !linked && len(s.users) >= MaxLinks {
+		log.Warnf("links store is full (%d links): refusing a new link", MaxLinks)
+		return ErrFull
+	}
 
 	return s.change(func() {
 		s.users[userID] = Link{UserID: userID, Login: login, LeetCode: leetcode}

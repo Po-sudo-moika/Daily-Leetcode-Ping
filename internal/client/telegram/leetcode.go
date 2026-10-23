@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 
+	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/client/leetcode"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/domain"
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
@@ -126,10 +126,6 @@ func leetcodeScreenText(link string, linked bool, lang subscribers.Language) str
 	}.in(lang)
 }
 
-// usernamePattern is what a LeetCode username looks like. It also keeps odd
-// text out of the questions sent to LeetCode.
-var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,40}$`)
-
 // leetcodeUsername reads a LeetCode username from what the person wrote: the
 // name itself, or a profile link such as https://leetcode.com/u/name/.
 func leetcodeUsername(arg string) (string, bool) {
@@ -154,7 +150,7 @@ func leetcodeUsername(arg string) (string, bool) {
 		name = parts[0]
 	}
 
-	return name, usernamePattern.MatchString(name)
+	return name, leetcode.ValidUsername(name)
 }
 
 // WithLeetCode turns on linking a LeetCode username and /show: links keeps the
@@ -205,6 +201,10 @@ func (m *Menu) HandleLeetcode(ctx context.Context, _ *bot.Bot, update *models.Up
 	name, ok := leetcodeUsername(fields[0])
 	if !ok {
 		m.sendText(ctx, chatID, unknownUserText(fields[0], lang))
+		return
+	}
+
+	if !m.allowLookup(ctx, chatID, msg.From.ID, lang) {
 		return
 	}
 
@@ -264,6 +264,14 @@ func (m *Menu) HandleShow(ctx context.Context, _ *bot.Bot, update *models.Update
 		return
 	}
 
+	asker := chatID
+	if msg.From != nil {
+		asker = msg.From.ID
+	}
+	if !m.allowLookup(ctx, chatID, asker, lang) {
+		return
+	}
+
 	calendar, err := m.leetcode.GetUserCalendar(ctx, link.LeetCode)
 	if err != nil {
 		log.Errorf("error while reading the LeetCode profile %q: %v", link.LeetCode, err)
@@ -272,6 +280,18 @@ func (m *Menu) HandleShow(ctx context.Context, _ *bot.Bot, update *models.Update
 	}
 
 	m.sendText(ctx, chatID, showText(link.LeetCode, calendar.CurrentStreak(m.now()), calendar.BestStreak, lang))
+}
+
+// allowLookup reports whether the user may ask LeetCode now, and tells them in
+// chatID when not. The limit counts a lookup even when the answer is cached.
+func (m *Menu) allowLookup(ctx context.Context, chatID, userID int64, lang subscribers.Language) bool {
+	if m.limits.allowLookup(userID) {
+		return true
+	}
+
+	m.sendText(ctx, chatID, tooManyLookupsText.in(lang))
+
+	return false
 }
 
 // HandleLeetcodeScreen opens the LeetCode screen of the private menu.
