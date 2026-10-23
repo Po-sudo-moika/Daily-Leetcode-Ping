@@ -65,7 +65,7 @@ for their streak.
   bot first asks LeetCode whether it knows the name; if not, it says so and
   saves nothing. `/leetcode` with no name shows the linked username, or how to
   link. The private menu has a **LeetCode** button with the same screen and a
-  button that removes the link. In a group or channel, `/leetcode` only says
+  button that removes the link. In a group, `/leetcode` only says
   that linking works in a private chat.
 - **Show** — in **any chat**, `/show @login` answers with the person's LeetCode
   username, their current streak and their best streak. The login is their
