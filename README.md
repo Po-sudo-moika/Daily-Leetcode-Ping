@@ -38,7 +38,7 @@ with the menu buttons or from `/settings`. Anyone else who presses one of those 
 gets a short note that only admins can change it, and nothing changes. If
 Telegram cannot say whether the person is an admin, nothing changes either,
 and the note asks them to try again. Everyone can still open the screens
-(Settings, About, Back). Private chats work as before. A channel has no
+(Settings, About, Language, Back). Private chats work as before. A channel has no
 members who press buttons, so it has no such rule.
 
 ## The menu
@@ -97,7 +97,7 @@ Telegram for its own username at start-up.
 ## Language and greeting
 
 Each chat has a language, Russian or English, and every chat starts in
-Russian. The button at the bottom of the menu switches the chat; the choice is
+Russian. The Language button at the bottom of the menu changes it; the choice is
 kept in the subscribers file, so it survives a restart. Everything the bot
 sends to that chat follows it: the menu and its screens, the notes (such as
 "admins only"), the greeting and the daily post. The `/chats` list for the
