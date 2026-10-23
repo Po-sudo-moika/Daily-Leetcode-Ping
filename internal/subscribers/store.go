@@ -61,12 +61,32 @@ func Now(t time.Time) int {
 	return At(t.Hour(), t.Minute())
 }
 
+// Language is the language a chat reads the bot in.
+type Language string
+
+const (
+	// Russian is the language of every chat until it switches.
+	Russian Language = "ru"
+	English Language = "en"
+)
+
+// Other returns the language a chat switches to: English for Russian and
+// Russian for anything else.
+func (l Language) Other() Language {
+	if l == Russian {
+		return English
+	}
+
+	return Russian
+}
+
 // ErrNotSubscribed means the chat has no subscription.
 var ErrNotSubscribed = errors.New("chat is not subscribed")
 
 // Store keeps the subscribers, their delivery time, the chats that chose to
-// unsubscribe and the day each chat last got the post in a small JSON file, so
-// that all of it survives a restart. It is safe for concurrent use.
+// unsubscribe, the day each chat last got the post, each chat's language and
+// the chats already greeted in a small JSON file, so that all of it survives a
+// restart. It is safe for concurrent use.
 //
 // A day is a Moscow date in time.DateOnly form, such as "2026-10-11". A chat
 // in the delivery records is a subscriber's id or a chat from config.toml.
@@ -82,6 +102,11 @@ type Store struct {
 	optedOut map[int64]bool
 	// delivered maps a chat to the last day it got the post.
 	delivered map[string]string
+	// languages holds the chats whose language is not Russian. It is kept
+	// whether or not the chat is subscribed.
+	languages map[int64]Language
+	// greeted holds the chats that were sent the hello of the first /start.
+	greeted map[int64]bool
 }
 
 // fileData is the file format. Chats is the original format and stays a plain
@@ -90,18 +115,24 @@ type Store struct {
 // time is not DefaultHour:00, keyed by chat id, and Minutes lists the minutes
 // of those that are not on the hour. An older build reads the hour and drops
 // the minutes. OptedOut lists the chats that pressed Unsubscribe. Delivered
-// maps a chat to the last day it got the post.
+// maps a chat to the last day it got the post. Languages maps a chat id to its
+// language when it is not Russian, and Greeted lists the chats that got the
+// hello of their first /start; an older file has neither, so every chat loads
+// in Russian and not yet greeted.
 type fileData struct {
 	Chats     []int64           `json:"chats"`
 	Hours     map[string]int    `json:"hours,omitempty"`
 	Minutes   map[string]int    `json:"minutes,omitempty"`
 	OptedOut  []int64           `json:"optedOut,omitempty"`
 	Delivered map[string]string `json:"delivered,omitempty"`
+	Languages map[string]string `json:"languages,omitempty"`
+	Greeted   []int64           `json:"greeted,omitempty"`
 }
 
 // Open loads the store from path. A missing file is an empty store.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, chats: make(map[int64]int), optedOut: make(map[int64]bool), delivered: make(map[string]string)}
+	s := &Store{path: path, chats: make(map[int64]int), optedOut: make(map[int64]bool), delivered: make(map[string]string),
+		languages: make(map[int64]Language), greeted: make(map[int64]bool)}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -153,6 +184,21 @@ func Open(path string) (*Store, error) {
 
 	for chat, day := range data.Delivered {
 		s.delivered[chat] = day
+	}
+
+	for key, lang := range data.Languages {
+		chatID, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse subscribers file %s: bad chat id %q in languages", path, key)
+		}
+		// A language the bot does not know is ignored: the chat stays Russian.
+		if Language(lang) == English {
+			s.languages[chatID] = English
+		}
+	}
+
+	for _, chatID := range data.Greeted {
+		s.greeted[chatID] = true
 	}
 
 	return s, nil
@@ -264,29 +310,43 @@ func (s *Store) Drop(chatID int64) (bool, error) {
 }
 
 // Migrate moves a chat to its new id when Telegram turns a group into a
-// supergroup: its subscription and time, or its Unsubscribe, and the day it
-// last got the post. The old id is forgotten. It reports whether there was
-// anything to move. A failed save leaves the store as it was.
+// supergroup: its subscription and time, or its Unsubscribe, its language and
+// greeting, and the day it last got the post. The old id is forgotten. It
+// reports whether there was anything to move. A failed save leaves the store as it was.
 func (s *Store) Migrate(from, to int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	hour, subscribed := s.chats[from]
-	if !subscribed && !s.optedOut[from] {
+	lang, hasLang := s.languages[from]
+	greeted := s.greeted[from]
+	if !subscribed && !s.optedOut[from] && !hasLang && !greeted {
 		return false, nil
 	}
 
 	chats, optedOut, delivered := maps.Clone(s.chats), maps.Clone(s.optedOut), maps.Clone(s.delivered)
+	languages, greetedChats := maps.Clone(s.languages), maps.Clone(s.greeted)
 
 	delete(s.chats, to)
 	delete(s.optedOut, to)
 	if subscribed {
 		s.chats[to] = hour
-	} else {
+	} else if s.optedOut[from] {
 		s.optedOut[to] = true
 	}
 	delete(s.chats, from)
 	delete(s.optedOut, from)
+
+	delete(s.languages, to)
+	delete(s.greeted, to)
+	if hasLang {
+		s.languages[to] = lang
+	}
+	if greeted {
+		s.greeted[to] = true
+	}
+	delete(s.languages, from)
+	delete(s.greeted, from)
 
 	fromKey := strconv.FormatInt(from, 10)
 	if day, ok := s.delivered[fromKey]; ok {
@@ -296,6 +356,7 @@ func (s *Store) Migrate(from, to int64) (bool, error) {
 
 	if err := s.save(); err != nil {
 		s.chats, s.optedOut, s.delivered = chats, optedOut, delivered
+		s.languages, s.greeted = languages, greetedChats
 		return false, err
 	}
 
@@ -332,6 +393,75 @@ func (s *Store) SetTime(chatID int64, t int) error {
 	s.chats[chatID] = t
 	if err := s.save(); err != nil {
 		s.chats[chatID] = old
+		return err
+	}
+
+	return nil
+}
+
+// Language returns the language of a chat: Russian until the chat switches. A
+// chat is known to the store or not, it makes no difference.
+func (s *Store) Language(chatID int64) Language {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if lang, ok := s.languages[chatID]; ok {
+		return lang
+	}
+
+	return Russian
+}
+
+// SetLanguage saves the language of a chat, subscribed or not. A failed save
+// leaves the store as it was.
+func (s *Store) SetLanguage(chatID int64, lang Language) error {
+	if lang != Russian && lang != English {
+		return fmt.Errorf("unknown language %q", lang)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	old, hadOld := s.languages[chatID]
+	if lang == Russian {
+		delete(s.languages, chatID)
+	} else {
+		s.languages[chatID] = lang
+	}
+
+	if err := s.save(); err != nil {
+		if hadOld {
+			s.languages[chatID] = old
+		} else {
+			delete(s.languages, chatID)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// Greeted reports whether the chat was sent the hello of its first /start.
+func (s *Store) Greeted(chatID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.greeted[chatID]
+}
+
+// MarkGreeted records that the chat was sent the hello. A failed save leaves
+// the store as it was.
+func (s *Store) MarkGreeted(chatID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.greeted[chatID] {
+		return nil
+	}
+
+	s.greeted[chatID] = true
+	if err := s.save(); err != nil {
+		delete(s.greeted, chatID)
 		return err
 	}
 
@@ -428,6 +558,16 @@ func (s *Store) save() error {
 		data.OptedOut = append(data.OptedOut, chatID)
 	}
 	slices.Sort(data.OptedOut)
+	for chatID, lang := range s.languages {
+		if data.Languages == nil {
+			data.Languages = make(map[string]string)
+		}
+		data.Languages[strconv.FormatInt(chatID, 10)] = string(lang)
+	}
+	for chatID := range s.greeted {
+		data.Greeted = append(data.Greeted, chatID)
+	}
+	slices.Sort(data.Greeted)
 	for chatID, t := range s.chats {
 		if t == DefaultTime {
 			continue

@@ -66,12 +66,11 @@ func ResolveFixedChats(ctx context.Context, api API, chats []string) []string {
 }
 
 func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
-	text := getPostMessageSchema(question)
 	day := now.Format(time.DateOnly)
 
 	var errs []error
 	for _, chat := range c.chats {
-		err := c.sendMessage(ctx, chat, text)
+		err := c.sendMessage(ctx, chat, c.post(chat, question))
 		at, _ := c.deliveryTime(chat)
 		timeHasCome := subscribers.Now(now) >= at
 		if err == nil || timeHasCome {
@@ -83,6 +82,17 @@ func (c *client) SendToFixedChats(ctx context.Context, now time.Time, question d
 	}
 
 	return errors.Join(errs...)
+}
+
+// post is the daily post for a chat, in the chat's language. A fixed chat given
+// by its @name has no id to look up, so it gets Russian.
+func (c *client) post(chat string, question domain.DailyQuestion) string {
+	lang := subscribers.Russian
+	if chatID, err := strconv.ParseInt(chat, 10, 64); err == nil {
+		lang = c.subscribers.Language(chatID)
+	}
+
+	return getPostMessageSchema(question, lang)
 }
 
 // fixedChatsTime is the Moscow time at which the chats from config.toml get
@@ -98,13 +108,12 @@ func (c *client) HasDue(now time.Time) bool {
 // SendDue records a delivery only after Telegram accepted the message, so a
 // chat that failed is due again at the next run.
 func (c *client) SendDue(ctx context.Context, now time.Time, question domain.DailyQuestion) error {
-	text := getPostMessageSchema(question)
 	day := now.Format(time.DateOnly)
 	fixed, subscribed := c.due(now)
 
 	var errs []error
 	for _, chat := range fixed {
-		err := c.sendMessage(ctx, chat, text)
+		err := c.sendMessage(ctx, chat, c.post(chat, question))
 		c.noteSend(chat, now, err)
 		if err == nil {
 			errs = append(errs, c.subscribers.MarkDelivered(chat, day))
@@ -113,7 +122,7 @@ func (c *client) SendDue(ctx context.Context, now time.Time, question domain.Dai
 
 	for _, chatID := range subscribed {
 		chat := strconv.FormatInt(chatID, 10)
-		err := c.sendMessage(ctx, chatID, text)
+		err := c.sendMessage(ctx, chatID, c.post(chat, question))
 		c.noteSend(chat, now, err)
 		switch {
 		case err == nil:

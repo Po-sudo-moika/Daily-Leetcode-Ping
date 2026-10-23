@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Po-sudo-moika/Daily-Leetcode-Ping/internal/subscribers"
 	"github.com/go-telegram/bot"
@@ -25,42 +26,102 @@ const (
 	// callbackTimePrefix is followed by the delivery time in minutes since
 	// midnight, like "time:570" for 09:30. It saves the time.
 	callbackTimePrefix = "time:"
+	// callbackLanguagePrefix is followed by the language to switch to, like
+	// "lang:en". It saves the language.
+	callbackLanguagePrefix = "lang:"
 
 	// RepositoryURL is the public code of the project.
 	RepositoryURL = "https://github.com/Po-sudo-moika/Daily-Leetcode-Ping"
 
-	welcomeText = "👋 Привет! Я присылаю задачу дня с LeetCode каждый день, по умолчанию в 11:00 по Москве. " +
-		"Время можно выбрать в настройках."
+	hoursPerRow   = 4
+	minutesPerRow = 4
+)
 
-	chooseText = "Выбери действие:"
+// The texts the menu shows, in each language of a chat.
+var (
+	welcomeText = message{
+		ru: "👋 Привет! Я присылаю задачу дня с LeetCode каждый день, по умолчанию в 11:00 по Москве. " +
+			"Время можно выбрать в настройках.",
+		en: "👋 Hi! I send the LeetCode problem of the day every day, at 11:00 Moscow time by default. " +
+			"You can pick the time in the settings.",
+	}
 
-	notSubscribedStatus = "🛑 Сейчас подписка отключена."
+	// greetingText is the hello a chat gets once, before the menu, on its
+	// first /start.
+	greetingText = message{
+		ru: "Привет! Я Daily LeetCode Ping. Каждый день присылаю задачу дня с LeetCode: название, сложность и ссылку. " +
+			"Время можно выбрать в настройках, а язык — кнопкой в меню.",
+		en: "Hi! I'm Daily LeetCode Ping. Every day I send the LeetCode problem of the day: its title, difficulty and a link. " +
+			"You can pick the time in the settings and the language with the button in the menu.",
+	}
 
-	unsubscribedText = "🛑 Подписка отключена. Чтобы вернуться, нажми «Подписаться»."
+	chooseText = message{ru: "Выбери действие:", en: "Choose an action:"}
 
-	saveFailedText = "⚠️ Не получилось сохранить выбор. Попробуй ещё раз чуть позже."
+	notSubscribedStatus = message{ru: "🛑 Сейчас подписка отключена.", en: "🛑 The subscription is off now."}
+
+	unsubscribedText = message{
+		ru: "🛑 Подписка отключена. Чтобы вернуться, нажми «Подписаться».",
+		en: "🛑 The subscription is off. To come back, press “Subscribe”.",
+	}
+
+	saveFailedText = message{
+		ru: "⚠️ Не получилось сохранить выбор. Попробуй ещё раз чуть позже.",
+		en: "⚠️ Could not save your choice. Please try again a little later.",
+	}
 
 	// adminsOnlyText is the note a member who is not an admin gets in a group
-	// when pressing a button that changes the subscription or the time.
-	adminsOnlyText = "Менять это в группе могут только админы."
+	// when pressing a button that changes the subscription, the time or the
+	// language.
+	adminsOnlyText = message{
+		ru: "Менять это в группе могут только админы.",
+		en: "Only admins can change this in a group.",
+	}
 
-	adminCheckFailedText = "Не получилось проверить, админ ли ты. Попробуй ещё раз чуть позже."
+	adminCheckFailedText = message{
+		ru: "Не получилось проверить, админ ли ты. Попробуй ещё раз чуть позже.",
+		en: "Could not check whether you are an admin. Please try again a little later.",
+	}
 
-	aboutText = "ℹ️ Daily LeetCode Ping — небольшой бот, который каждый день в выбранное время " +
-		"(по умолчанию в 11:00 МСК) присылает задачу дня с leetcode.com: название, сложность и ссылку.\n\n" +
-		"Код открыт — смотри на GitHub."
+	aboutText = message{
+		ru: "ℹ️ Daily LeetCode Ping — небольшой бот, который каждый день в выбранное время " +
+			"(по умолчанию в 11:00 МСК) присылает задачу дня с leetcode.com: название, сложность и ссылку.\n\n" +
+			"Код открыт — смотри на GitHub.",
+		en: "ℹ️ Daily LeetCode Ping is a small bot that sends the daily problem from leetcode.com every day " +
+			"at the time you pick (11:00 Moscow time by default): its title, difficulty and a link.\n\n" +
+			"The code is open — see it on GitHub.",
+	}
 
-	settingsNotSubscribedText = "⚙️ Настройки\n\nВремя рассылки можно выбрать после подписки. Нажми «Подписаться»."
+	settingsNotSubscribedText = message{
+		ru: "⚙️ Настройки\n\nВремя рассылки можно выбрать после подписки. Нажми «Подписаться».",
+		en: "⚙️ Settings\n\nYou can pick the time after you subscribe. Press “Subscribe”.",
+	}
 
-	// What people see in the bot's profile before they press Start. Telegram
-	// limits: description 512 characters, short description 120.
+	subscribeButton   = message{ru: "✅ Подписаться", en: "✅ Subscribe"}
+	unsubscribeButton = message{ru: "🛑 Отписаться", en: "🛑 Unsubscribe"}
+	settingsButton    = message{ru: "⚙️ Настройки", en: "⚙️ Settings"}
+	aboutButton       = message{ru: "ℹ️ О проекте", en: "ℹ️ About"}
+	backLabel         = message{ru: "⬅️ Назад", en: "⬅️ Back"}
+	codeButton        = message{ru: "📦 Код на GitHub", en: "📦 Code on GitHub"}
+)
+
+// languageLabel is the label of the button that switches to lang. It is in
+// that language, so the person can read it whatever the chat speaks now.
+func languageLabel(lang subscribers.Language) string {
+	if lang == subscribers.English {
+		return "🇬🇧 English"
+	}
+
+	return "🇷🇺 Русский"
+}
+
+// What people see in the bot's profile before they press Start. Telegram
+// limits: description 512 characters, short description 120. It is the same for
+// everyone, in Russian: a per-language profile is a later change.
+const (
 	botDescription = "Присылаю задачу дня с LeetCode каждый день в удобное время (по умолчанию в 11:00 по Москве): " +
 		"название, сложность и ссылку.\n\nНажми «Начать» — подписка включится сама, откроется меню: " +
 		"там можно выбрать время рассылки и отписаться. Меня можно добавить и в группу или канал."
 	botShortDescription = "Задача дня с LeetCode каждый день в удобное время по Москве"
-
-	hoursPerRow   = 4
-	minutesPerRow = 4
 )
 
 // screen is what the one menu message shows: its text and its buttons.
@@ -84,6 +145,10 @@ type Menu struct {
 	// ownerID is the Telegram user id of the bot's owner; 0 means /chats
 	// answers nobody.
 	ownerID int64
+	// greetMu makes checking, sending and recording the hello one step. The
+	// bot runs handlers at the same time, so two /start from a new chat that
+	// arrive together would otherwise both send it.
+	greetMu sync.Mutex
 }
 
 // NewMenu returns the menu. fixedChats are the chats from config.toml, as
@@ -113,6 +178,7 @@ func (m *Menu) Register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackMenu, bot.MatchTypeExact, m.HandleBack)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackHourPrefix, bot.MatchTypePrefix, m.HandleHour)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackTimePrefix, bot.MatchTypePrefix, m.HandleTime)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, callbackLanguagePrefix, bot.MatchTypePrefix, m.HandleLanguage)
 }
 
 // Setup publishes the bot's profile: the text shown before Start and the
@@ -141,14 +207,38 @@ func (m *Menu) Setup(ctx context.Context) error {
 }
 
 // HandleStart opens the menu in a new message. Every button press after it
-// edits that message.
+// edits that message. The first time a chat starts the bot, a short hello comes
+// before the menu.
 func (m *Menu) HandleStart(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	if update.Message == nil {
 		return
 	}
 
 	chatID := update.Message.Chat.ID
+	m.greet(ctx, chatID)
 	m.send(ctx, chatID, m.welcomeScreen(chatID))
+}
+
+// greet sends the hello to a chat that has not had it yet, and records that it
+// has. A hello that could not be sent is not recorded, so the next /start tries
+// again.
+func (m *Menu) greet(ctx context.Context, chatID int64) {
+	m.greetMu.Lock()
+	defer m.greetMu.Unlock()
+
+	if m.subscribers.Greeted(chatID) {
+		return
+	}
+
+	text := greetingText.in(m.subscribers.Language(chatID))
+	if _, err := m.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text}); err != nil {
+		log.Errorf("error while sending the greeting to %d: %v", chatID, err)
+		return
+	}
+
+	if err := m.subscribers.MarkGreeted(chatID); err != nil {
+		log.Errorf("error while recording the greeting of %d: %v", chatID, err)
+	}
 }
 
 // HandleSettingsCommand opens the settings screen in a new message.
@@ -167,14 +257,15 @@ func (m *Menu) HandleSubscribe(ctx context.Context, _ *bot.Bot, update *models.U
 		return
 	}
 
+	lang := m.subscribers.Language(t.chatID)
 	if _, err := m.subscribers.Add(t.chatID); err != nil {
 		log.Errorf("error while changing subscription of %d: %v", t.chatID, err)
-		m.show(ctx, t, mainScreen(saveFailedText))
+		m.show(ctx, t, mainScreen(saveFailedText.in(lang), lang))
 		return
 	}
 
 	at, _ := m.subscribers.Time(t.chatID)
-	m.show(ctx, t, mainScreen(subscribedText(at)))
+	m.show(ctx, t, mainScreen(subscribedText(at, lang), lang))
 }
 
 func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -183,17 +274,18 @@ func (m *Menu) HandleUnsubscribe(ctx context.Context, _ *bot.Bot, update *models
 		return
 	}
 
+	lang := m.subscribers.Language(t.chatID)
 	if _, err := m.subscribers.Remove(t.chatID); err != nil {
 		log.Errorf("error while changing subscription of %d: %v", t.chatID, err)
-		m.show(ctx, t, mainScreen(saveFailedText))
+		m.show(ctx, t, mainScreen(saveFailedText.in(lang), lang))
 		return
 	}
 
-	text := unsubscribedText
+	text := unsubscribedText.in(lang)
 	if m.isFixed(t.chatID) {
-		text = fixedStatus()
+		text = fixedStatus(lang)
 	}
-	m.show(ctx, t, mainScreen(text))
+	m.show(ctx, t, mainScreen(text, lang))
 }
 
 func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -202,7 +294,7 @@ func (m *Menu) HandleAbout(ctx context.Context, _ *bot.Bot, update *models.Updat
 		return
 	}
 
-	m.show(ctx, t, aboutScreen())
+	m.show(ctx, t, aboutScreen(m.subscribers.Language(t.chatID)))
 }
 
 func (m *Menu) HandleSettings(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -250,6 +342,7 @@ func (m *Menu) HandleTime(ctx context.Context, _ *bot.Bot, update *models.Update
 		return
 	}
 
+	lang := m.subscribers.Language(t.chatID)
 	at, err := strconv.Atoi(strings.TrimPrefix(update.CallbackQuery.Data, callbackTimePrefix))
 	if err == nil {
 		err = m.subscribers.SetTime(t.chatID, at)
@@ -257,14 +350,44 @@ func (m *Menu) HandleTime(ctx context.Context, _ *bot.Bot, update *models.Update
 
 	switch {
 	case err == nil:
-		m.show(ctx, t, m.settingsScreen(t.chatID, "✅ Сохранено: каждый день в "+subscribers.Format(at)+" (МСК)."))
+		saved := fmt.Sprintf(message{
+			ru: "✅ Сохранено: каждый день в %s (МСК).",
+			en: "✅ Saved: every day at %s (Moscow time).",
+		}.in(lang), subscribers.Format(at))
+		m.show(ctx, t, m.settingsScreen(t.chatID, saved))
 	case errors.Is(err, subscribers.ErrNotSubscribed), errors.Is(err, subscribers.ErrInvalidTime), isBadNumber(err):
 		// A stale or made-up button: show the screen as it really is.
 		m.show(ctx, t, m.settingsScreen(t.chatID, ""))
 	default:
 		log.Errorf("error while saving time of %d: %v", t.chatID, err)
-		m.show(ctx, t, m.settingsScreen(t.chatID, saveFailedText))
+		m.show(ctx, t, m.settingsScreen(t.chatID, saveFailedText.in(lang)))
 	}
+}
+
+// HandleLanguage saves the language of the pressed button for the chat and
+// shows the menu in it. The button names the language to switch to, so two
+// presses of the same button never switch back.
+func (m *Menu) HandleLanguage(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	t, ok := m.ackCallback(ctx, update, adminOnly)
+	if !ok {
+		return
+	}
+
+	lang := subscribers.Language(strings.TrimPrefix(update.CallbackQuery.Data, callbackLanguagePrefix))
+	if lang != subscribers.Russian && lang != subscribers.English {
+		// A stale or made-up button: show the screen as it really is.
+		m.show(ctx, t, m.welcomeScreen(t.chatID))
+		return
+	}
+
+	if err := m.subscribers.SetLanguage(t.chatID, lang); err != nil {
+		log.Errorf("error while saving language of %d: %v", t.chatID, err)
+		current := m.subscribers.Language(t.chatID)
+		m.show(ctx, t, mainScreen(saveFailedText.in(current), current))
+		return
+	}
+
+	m.show(ctx, t, m.welcomeScreen(t.chatID))
 }
 
 // isBadNumber reports a callback whose value is not a number.
@@ -311,7 +434,7 @@ func (m *Menu) ackCallback(ctx context.Context, update *models.Update, only bool
 
 	note := ""
 	if found && only && (chatType == models.ChatTypeGroup || chatType == models.ChatTypeSupergroup) {
-		note = m.adminNote(ctx, t.chatID, query.From.ID)
+		note = m.adminNote(ctx, t.chatID, query.From.ID, m.subscribers.Language(t.chatID))
 	}
 
 	if _, err := m.api.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID, Text: note}); err != nil {
@@ -324,11 +447,11 @@ func (m *Menu) ackCallback(ctx context.Context, update *models.Update, only bool
 // adminNote returns "" when the user is an admin (creator or administrator) of
 // the group, and otherwise the note to show. When Telegram cannot say, the user
 // is not let through: nothing changes, and they are asked to try again.
-func (m *Menu) adminNote(ctx context.Context, chatID, userID int64) string {
+func (m *Menu) adminNote(ctx context.Context, chatID, userID int64, lang subscribers.Language) string {
 	member, err := m.api.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: chatID, UserID: userID})
 	if err != nil {
 		log.Errorf("error while checking whether user %d is an admin of chat %d: %v", userID, chatID, err)
-		return adminCheckFailedText
+		return adminCheckFailedText.in(lang)
 	}
 
 	switch member.Type {
@@ -336,7 +459,7 @@ func (m *Menu) adminNote(ctx context.Context, chatID, userID int64) string {
 		return ""
 	}
 
-	return adminsOnlyText
+	return adminsOnlyText.in(lang)
 }
 
 // show puts the screen into the menu message, in place. If Telegram refuses
@@ -376,21 +499,26 @@ func (m *Menu) send(ctx context.Context, chatID int64, s screen) {
 }
 
 func (m *Menu) settingsScreen(chatID int64, note string) screen {
+	lang := m.subscribers.Language(chatID)
 	at, subscribed := m.subscribers.Time(chatID)
 	if !subscribed {
 		return screen{
-			text: withNote(note, settingsNotSubscribedText),
+			text: withNote(note, settingsNotSubscribedText.in(lang)),
 			markup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-				{{Text: "✅ Подписаться", CallbackData: callbackSubscribe}},
-				{backButton()},
+				{{Text: subscribeButton.in(lang), CallbackData: callbackSubscribe}},
+				{backButton(lang)},
 			}},
 		}
 	}
 
-	text := fmt.Sprintf("⚙️ Настройки\n\nВо сколько присылать задачу дня? Время московское (МСК, UTC+3). "+
-		"Сейчас: %s.\n\nСначала выбери час, потом минуты (с шагом %d минут). "+
-		"Задача на LeetCode меняется в 03:00 МСК, поэтому доступно время с %s до %s.",
-		subscribers.Format(at), subscribers.MinuteStep, subscribers.Format(subscribers.MinTime), subscribers.Format(subscribers.MaxTime))
+	text := fmt.Sprintf(message{
+		ru: "⚙️ Настройки\n\nВо сколько присылать задачу дня? Время московское (МСК, UTC+3). " +
+			"Сейчас: %s.\n\nСначала выбери час, потом минуты (с шагом %d минут). " +
+			"Задача на LeetCode меняется в 03:00 МСК, поэтому доступно время с %s до %s.",
+		en: "⚙️ Settings\n\nAt what time should I send the problem of the day? The time is Moscow time (MSK, UTC+3). " +
+			"Now: %s.\n\nFirst pick the hour, then the minutes (in steps of %d minutes). " +
+			"The LeetCode problem changes at 03:00 MSK, so the times from %s to %s are available.",
+	}.in(lang), subscribers.Format(at), subscribers.MinuteStep, subscribers.Format(subscribers.MinTime), subscribers.Format(subscribers.MaxTime))
 
 	var rows [][]models.InlineKeyboardButton
 	for h := subscribers.MinHour; h <= subscribers.MaxHour; h++ {
@@ -405,7 +533,7 @@ func (m *Menu) settingsScreen(chatID int64, note string) screen {
 		last := len(rows) - 1
 		rows[last] = append(rows[last], models.InlineKeyboardButton{Text: label, CallbackData: callbackHourPrefix + strconv.Itoa(h)})
 	}
-	rows = append(rows, []models.InlineKeyboardButton{backButton()})
+	rows = append(rows, []models.InlineKeyboardButton{backButton(lang)})
 
 	return screen{text: withNote(note, text), markup: &models.InlineKeyboardMarkup{InlineKeyboard: rows}}
 }
@@ -413,9 +541,13 @@ func (m *Menu) settingsScreen(chatID int64, note string) screen {
 // minutesScreen offers the minutes of one hour, with the current choice marked
 // when it falls in that hour. Its Back button returns to the hours.
 func (m *Menu) minutesScreen(chatID int64, hour int) screen {
+	lang := m.subscribers.Language(chatID)
 	at, _ := m.subscribers.Time(chatID)
 
-	text := fmt.Sprintf("⚙️ Настройки\n\nВыбери минуты для %02d:__ (МСК). Сейчас: %s.", hour, subscribers.Format(at))
+	text := fmt.Sprintf(message{
+		ru: "⚙️ Настройки\n\nВыбери минуты для %02d:__ (МСК). Сейчас: %s.",
+		en: "⚙️ Settings\n\nPick the minutes for %02d:__ (MSK). Now: %s.",
+	}.in(lang), hour, subscribers.Format(at))
 
 	var rows [][]models.InlineKeyboardButton
 	for minute := 0; minute < 60; minute += subscribers.MinuteStep {
@@ -431,7 +563,7 @@ func (m *Menu) minutesScreen(chatID int64, hour int) screen {
 		last := len(rows) - 1
 		rows[last] = append(rows[last], models.InlineKeyboardButton{Text: label, CallbackData: callbackTimePrefix + strconv.Itoa(choice)})
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: "⬅️ Назад", CallbackData: callbackSettings}})
+	rows = append(rows, []models.InlineKeyboardButton{{Text: backLabel.in(lang), CallbackData: callbackSettings}})
 
 	return screen{text: text, markup: &models.InlineKeyboardMarkup{InlineKeyboard: rows}}
 }
@@ -447,12 +579,13 @@ func withNote(note, text string) string {
 // welcomeScreen is the menu with the chat's subscription state. A fixed chat
 // without a subscription of its own still gets the post, and is told so.
 func (m *Menu) welcomeScreen(chatID int64) screen {
+	lang := m.subscribers.Language(chatID)
 	at, subscribed := m.subscribers.Time(chatID)
 	if !subscribed && m.isFixed(chatID) {
-		return mainScreen(welcomeWith(fixedStatus()))
+		return mainScreen(welcomeWith(fixedStatus(lang), lang), lang)
 	}
 
-	return mainScreen(welcomeFor(at, subscribed))
+	return mainScreen(welcomeFor(at, subscribed, lang), lang)
 }
 
 // isFixed reports whether the chat is one of the chats from config.toml.
@@ -468,29 +601,38 @@ func (m *Menu) isFixed(chatID int64) bool {
 
 // welcomeFor is the menu text for a chat that is subscribed at time at, or is
 // not subscribed.
-func welcomeFor(at int, subscribed bool) string {
-	status := notSubscribedStatus
+func welcomeFor(at int, subscribed bool, lang subscribers.Language) string {
+	status := notSubscribedStatus.in(lang)
 	if subscribed {
-		status = fmt.Sprintf("✅ Сейчас подписка включена: каждый день в %s (МСК).", subscribers.Format(at))
+		status = fmt.Sprintf(message{
+			ru: "✅ Сейчас подписка включена: каждый день в %s (МСК).",
+			en: "✅ The subscription is on: every day at %s (Moscow time).",
+		}.in(lang), subscribers.Format(at))
 	}
 
-	return welcomeWith(status)
+	return welcomeWith(status, lang)
 }
 
-func welcomeWith(status string) string {
-	return welcomeText + "\n\n" + status + "\n\n" + chooseText
+func welcomeWith(status string, lang subscribers.Language) string {
+	return welcomeText.in(lang) + "\n\n" + status + "\n\n" + chooseText.in(lang)
 }
 
 // fixedStatus is the state of a fixed chat without a subscription of its own:
 // it gets the post anyway, at the fixed time.
-func fixedStatus() string {
-	return fmt.Sprintf("✅ Этот чат в списке рассылки бота: задача дня приходит сюда каждый день в %s (МСК).",
-		subscribers.Format(fixedChatsTime))
+func fixedStatus(lang subscribers.Language) string {
+	return fmt.Sprintf(message{
+		ru: "✅ Этот чат в списке рассылки бота: задача дня приходит сюда каждый день в %s (МСК).",
+		en: "✅ This chat is on the bot's mailing list: the problem of the day comes here every day at %s (Moscow time).",
+	}.in(lang), subscribers.Format(fixedChatsTime))
 }
 
-func subscribedText(at int) string {
-	return fmt.Sprintf("✅ Подписка включена. Задача дня будет приходить каждый день в %s (МСК). "+
-		"Время можно поменять в настройках.", subscribers.Format(at))
+func subscribedText(at int, lang subscribers.Language) string {
+	return fmt.Sprintf(message{
+		ru: "✅ Подписка включена. Задача дня будет приходить каждый день в %s (МСК). " +
+			"Время можно поменять в настройках.",
+		en: "✅ The subscription is on. The problem of the day will come every day at %s (Moscow time). " +
+			"You can change the time in the settings.",
+	}.in(lang), subscribers.Format(at))
 }
 
 // hourLabel is the label of an hour button, like "09:00".
@@ -498,35 +640,42 @@ func hourLabel(hour int) string {
 	return subscribers.Format(subscribers.At(hour, 0))
 }
 
-func backButton() models.InlineKeyboardButton {
-	return models.InlineKeyboardButton{Text: "⬅️ Назад", CallbackData: callbackMenu}
+func backButton(lang subscribers.Language) models.InlineKeyboardButton {
+	return models.InlineKeyboardButton{Text: backLabel.in(lang), CallbackData: callbackMenu}
 }
 
-func mainScreen(text string) screen {
+// mainScreen is the menu in lang. Its last button switches to the other
+// language and is labelled in it.
+func mainScreen(text string, lang subscribers.Language) screen {
+	other := lang.Other()
+
 	return screen{
 		text: text,
 		markup: &models.InlineKeyboardMarkup{
 			InlineKeyboard: [][]models.InlineKeyboardButton{
 				{
-					{Text: "✅ Подписаться", CallbackData: callbackSubscribe},
-					{Text: "🛑 Отписаться", CallbackData: callbackUnsubscribe},
+					{Text: subscribeButton.in(lang), CallbackData: callbackSubscribe},
+					{Text: unsubscribeButton.in(lang), CallbackData: callbackUnsubscribe},
 				},
 				{
-					{Text: "⚙️ Настройки", CallbackData: callbackSettings},
-					{Text: "ℹ️ О проекте", CallbackData: callbackAbout},
+					{Text: settingsButton.in(lang), CallbackData: callbackSettings},
+					{Text: aboutButton.in(lang), CallbackData: callbackAbout},
+				},
+				{
+					{Text: languageLabel(other), CallbackData: callbackLanguagePrefix + string(other)},
 				},
 			},
 		},
 	}
 }
 
-func aboutScreen() screen {
+func aboutScreen(lang subscribers.Language) screen {
 	return screen{
-		text: aboutText,
+		text: aboutText.in(lang),
 		markup: &models.InlineKeyboardMarkup{
 			InlineKeyboard: [][]models.InlineKeyboardButton{
-				{{Text: "📦 Код на GitHub", URL: RepositoryURL}},
-				{backButton()},
+				{{Text: codeButton.in(lang), URL: RepositoryURL}},
+				{backButton(lang)},
 			},
 		},
 	}

@@ -43,11 +43,11 @@ func commandUpdate(chatID int64, text string) *models.Update {
 }
 
 func TestRegister_StartCommand(t *testing.T) {
-	b, api := newRegisteredBot(t, subscribed())
+	b, api := newRegisteredBot(t, subscribed().greet(10))
 
 	b.ProcessUpdate(context.Background(), commandUpdate(10, "/start"))
 
-	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultTime, true) {
+	if len(api.sent) != 1 || api.sent[0].Text != welcomeFor(subscribers.DefaultTime, true, subscribers.Russian) {
 		t.Fatalf("unexpected reply to /start: %+v", api.sent)
 	}
 }
@@ -96,7 +96,7 @@ func TestRegister_Buttons(t *testing.T) {
 	for _, e := range api.edited {
 		texts = append(texts, e.Text)
 	}
-	if len(texts) != 7 || texts[0] != subscribedText(subscribers.DefaultTime) || texts[4] != welcomeFor(subscribers.At(15, 45), true) || texts[5] != aboutText || texts[6] != unsubscribedText {
+	if len(texts) != 7 || texts[0] != subscribedText(subscribers.DefaultTime, subscribers.Russian) || texts[4] != welcomeFor(subscribers.At(15, 45), true, subscribers.Russian) || texts[5] != aboutText.in(subscribers.Russian) || texts[6] != unsubscribedText.in(subscribers.Russian) {
 		t.Fatalf("edited texts %q", texts)
 	}
 }

@@ -966,3 +966,36 @@ func TestFormat(t *testing.T) {
 		}
 	}
 }
+
+// A file written before chats had a language loads with every chat in Russian,
+// and its times, subscriptions and last post days are unchanged.
+func TestOpen_FileWithoutLanguagesLoadsInRussian(t *testing.T) {
+	s, err := Open(writeFile(t, `{
+  "chats": [5, 6],
+  "hours": {"5": 9},
+  "minutes": {"5": 30},
+  "optedOut": [7],
+  "delivered": {"5": "2026-10-10"}
+}`))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	for _, chatID := range []int64{5, 6, 7, 99} {
+		if got := s.Language(chatID); got != Russian {
+			t.Errorf("language of chat %d is %q, want %q", chatID, got, Russian)
+		}
+	}
+	if at, ok := s.Time(5); !ok || at != At(9, 30) {
+		t.Errorf("time of chat 5 is %d (subscribed %v), want %d", at, ok, At(9, 30))
+	}
+	if at, ok := s.Time(6); !ok || at != DefaultTime {
+		t.Errorf("time of chat 6 is %d (subscribed %v), want %d", at, ok, DefaultTime)
+	}
+	if _, ok := s.Time(7); ok {
+		t.Error("chat 7 pressed Unsubscribe and must stay unsubscribed")
+	}
+	if got := s.LastDelivered("5"); got != "2026-10-10" {
+		t.Errorf("last post day of chat 5 is %q, want 2026-10-10", got)
+	}
+}
